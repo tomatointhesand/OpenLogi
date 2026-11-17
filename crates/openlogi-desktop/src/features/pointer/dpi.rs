@@ -9,13 +9,14 @@
 //! exposes exact device-supported values once the list is known.
 
 use gpui::{
-    AnyElement, Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, Window,
-    div, px,
+    AnyElement, AppContext as _, ClickEvent, Context, Entity, IntoElement, ParentElement, Render,
+    Styled, Subscription, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_kit::component::{
-    Icon, IconName, Selectable as _, Sizable as _,
+    Icon, IconName, Selectable as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
+    input::InputState,
     slider::{Slider, SliderState},
     v_flex,
 };
@@ -26,7 +27,7 @@ use super::pointer_speed::{PointerSpeedFacts, PointerSpeedSlider, pointer_speed_
 use super::report_rate::{ReportRateFacts, report_rate_section};
 use crate::state::{AppState, DeviceKey, DpiLoad, StateEvent};
 use crate::ui::commit_slider::{CommitSlider, SliderRange};
-use crate::ui::components::PresetChip;
+use crate::ui::components::{PresetChip, control_input, save_cancel_footer};
 use crate::ui::slider_row::SliderRow;
 use crate::ui::status::{retry_line, status_line};
 use crate::ui::theme::{self, Palette, Typography as _};
@@ -214,12 +215,27 @@ impl DpiPanel {
             _ => snapshot.dpi,
         };
 
+        // The thumb cannot land on an exact value across a range this wide, so
+        // the number opens an entry once the device's supported values are known.
+        let typeable = matches!(
+            &snapshot.status,
+            DpiLoad::Ready(info) if info.capabilities.min() != info.capabilities.max()
+        );
         v_flex()
             .gap_3()
             .w_full()
             .child(
                 SliderRow::new(tr!("pointer.dpi"), slider)
                     .value(snapshot.dpi.to_string(), [widest.to_string()])
+                    .when(typeable, |row| {
+                        row.value_entry(
+                            "dpi-value",
+                            tr!("camera.set_value_label", label => tr!("pointer.dpi")),
+                            cx.listener(|_, _: &ClickEvent, window, cx| {
+                                Self::open_value_dialog(window, cx);
+                            }),
+                        )
+                    })
                     .hint(range_label),
             )
             .child(
@@ -241,6 +257,67 @@ impl DpiPanel {
             )
             .into_any_element()
     }
+}
+
+impl DpiPanel {
+    /// Ask for an exact DPI. A value inside the device's range is snapped to
+    /// the nearest one it supports, as a preset click is; anything else keeps
+    /// the dialog open.
+    fn open_value_dialog(window: &mut Window, cx: &mut Context<Self>) {
+        let Some(capabilities) =
+            AppState::try_read(cx).and_then(|state| state.active_dpi_capabilities().cloned())
+        else {
+            return;
+        };
+        let current = AppState::try_read(cx).map_or_else(|| capabilities.min(), AppState::dpi);
+        let input = cx.new(|cx| {
+            let mut input = InputState::new(window, cx);
+            input.set_value(current.to_string(), window, cx);
+            input
+        });
+        let range = (capabilities.min(), capabilities.max());
+
+        window.open_dialog(cx, move |dialog, window, cx| {
+            input.update(cx, |input, cx| input.focus(window, cx));
+            dialog
+                .w(px(320.))
+                .title(tr!("camera.set_value_title", label => tr!("pointer.dpi")))
+                .child(
+                    v_flex().gap_2().child(control_input(&input)).child(
+                        div()
+                            .text_caption()
+                            .text_color(theme::palette(cx).text_muted)
+                            .child(tr!(
+                                "camera.supported_range",
+                                min => range.0.to_string(),
+                                max => range.1.to_string()
+                            )),
+                    ),
+                )
+                .footer(save_cancel_footer())
+                .on_ok({
+                    let input = input.clone();
+                    let capabilities = capabilities.clone();
+                    move |_, _, cx| {
+                        let Some(dpi) = parse_dpi_entry(&input.read(cx).value(), &capabilities)
+                        else {
+                            return false;
+                        };
+                        AppState::apply(cx, |state| state.commit_dpi(dpi));
+                        true
+                    }
+                })
+        });
+    }
+}
+
+/// The DPI a typed `text` asks for: a whole number inside the device's range,
+/// snapped to the nearest value it supports. `None` for anything else, so the
+/// dialog stays open instead of quietly choosing a value the user did not type.
+fn parse_dpi_entry(text: &str, capabilities: &DpiCapabilities) -> Option<Dpi> {
+    let typed = text.trim().parse::<u16>().ok().map(Dpi::new)?;
+    (capabilities.min() <= typed && typed <= capabilities.max())
+        .then(|| capabilities.nearest(typed))
 }
 
 fn dpi_panel_snapshot(cx: &mut Context<DpiPanel>) -> DpiPanelSnapshot {
@@ -410,4 +487,40 @@ fn add_preset_chip() -> impl IntoElement {
                 state.commit_dpi_presets(presets)
             });
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn capabilities() -> DpiCapabilities {
+        DpiCapabilities::new(vec![100, 150, 200, 400, 800, 1600, 3200]).unwrap()
+    }
+
+    #[test]
+    fn a_supported_value_is_taken_as_typed() {
+        assert_eq!(
+            parse_dpi_entry(" 800 ", &capabilities()),
+            Some(Dpi::new(800))
+        );
+    }
+
+    #[test]
+    fn an_in_range_value_between_two_supported_ones_snaps_to_the_nearest() {
+        assert_eq!(
+            parse_dpi_entry("1000", &capabilities()),
+            Some(Dpi::new(800))
+        );
+        assert_eq!(
+            parse_dpi_entry("2600", &capabilities()),
+            Some(Dpi::new(3200))
+        );
+    }
+
+    #[test]
+    fn a_value_outside_the_range_or_not_a_number_is_refused() {
+        for text in ["", "abc", "-5", "99", "3201", "99999", "1.5", "80 0"] {
+            assert_eq!(parse_dpi_entry(text, &capabilities()), None, "{text:?}");
+        }
+    }
 }
