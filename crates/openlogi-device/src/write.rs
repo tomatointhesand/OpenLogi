@@ -37,6 +37,7 @@ mod litra;
 mod onboard;
 mod os_layout;
 mod pointer_scaling;
+pub mod profile_backup;
 pub mod profile_edit;
 mod report_rate;
 mod sidetone;
