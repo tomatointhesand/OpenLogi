@@ -9,7 +9,9 @@
 //! * bytes 4..29 are five stages of 5 bytes each: X DPI (little-endian `u16`),
 //!   Y DPI (little-endian `u16`), lift-off distance (`u8`);
 //! * the last two bytes of the sector are a CRC-16/CCITT-FALSE of every byte
-//!   before them, big-endian (the fixture's `dc b5` is exactly that).
+//!   before them, big-endian (the fixture's `dc b5` is exactly that);
+//! * a slot whose DPI is zero is unused: with `800, 3200, 0, 0, 0` the DPI
+//!   button toggles between the two (checked on the mouse).
 //!
 //! Every other byte (report rate, button mapping, LED settings, name) is left
 //! as it is. Formats other than 6 are not known to share this layout.
@@ -60,10 +62,6 @@ pub enum ProfileError {
         /// How many stages were given.
         count: usize,
     },
-    /// A list shorter than the profile's five slots, whose unused slots we
-    /// cannot yet encode the way the mouse does.
-    #[error("{0} DPI stages given, but only a full set of {DPI_STAGE_COUNT} can be stored for now")]
-    FewerThanFiveStages(usize),
     /// A stored stage whose X and Y differ, which an edit would flatten.
     #[error("stage {0} has different X and Y DPI; refusing to overwrite it")]
     SplitAxes(usize),
@@ -141,9 +139,20 @@ impl ProfileSector {
         self.0[DEFAULT_STAGE_AT]
     }
 
-    /// A copy with `stages` as its DPI stages (both axes) and `default` as its
-    /// default stage. Every other byte is unchanged, lift-off distances
-    /// included, and the checksum is recomputed.
+    /// The stages in use: those before the first unused (zero) slot.
+    #[must_use]
+    pub fn presets(&self) -> Vec<u16> {
+        self.dpi_stages()
+            .into_iter()
+            .take_while(|&stage| stage != 0)
+            .collect()
+    }
+
+    /// A copy with `stages` (one to five) as its DPI stages on both axes and
+    /// `default` as its default stage. Slots past the given stages are zeroed,
+    /// which is how a G PRO 2 LIGHTSPEED marks them unused (its DPI button
+    /// then cycles only the stages given). Every other byte is unchanged,
+    /// lift-off distances included, and the checksum is recomputed.
     pub fn with_dpi_stages(&self, stages: &[u16], default: u8) -> Result<Self, ProfileError> {
         if stages.is_empty() {
             return Err(ProfileError::NoStages);
@@ -160,66 +169,21 @@ impl ProfileSector {
                 count: stages.len(),
             });
         }
-        if stages.len() < DPI_STAGE_COUNT {
-            return Err(ProfileError::FewerThanFiveStages(stages.len()));
-        }
         if let Some(split) = (0..DPI_STAGE_COUNT).find(|&i| self.axis(i, 0) != self.axis(i, 1)) {
             return Err(ProfileError::SplitAxes(split));
         }
-        Ok(self.sealed_with(stages, default, None))
-    }
-
-    /// An experimental edit: `presets` are the first stages and every unused
-    /// slot holds `marker` (both axes). How the mouse marks unused slots is
-    /// not known; this is how candidates are tried, on a mouse, with a backup.
-    pub fn with_unused_marker(
-        &self,
-        presets: &[u16],
-        default: u8,
-        marker: u16,
-    ) -> Result<Self, ProfileError> {
-        if presets.is_empty() {
-            return Err(ProfileError::NoStages);
-        }
-        if presets.len() > DPI_STAGE_COUNT {
-            return Err(ProfileError::TooManyStages(presets.len()));
-        }
-        if let Some(&zero) = presets.iter().find(|&&stage| stage == 0) {
-            return Err(ProfileError::BadStage(zero));
-        }
-        if usize::from(default) >= presets.len() {
-            return Err(ProfileError::DefaultOutOfRange {
-                default,
-                count: presets.len(),
-            });
-        }
-        if let Some(split) = (0..DPI_STAGE_COUNT).find(|&i| self.axis(i, 0) != self.axis(i, 1)) {
-            return Err(ProfileError::SplitAxes(split));
-        }
-        Ok(self.sealed_with(presets, default, Some(marker)))
-    }
-
-    /// The bytes with `stages` in the first slots, `marker` (if any) in the
-    /// rest, `default` set and the checksum recomputed. Inputs are validated.
-    fn sealed_with(&self, stages: &[u16], default: u8, marker: Option<u16>) -> Self {
         let mut bytes = self.0.clone();
         bytes[DEFAULT_STAGE_AT] = default;
-        for (i, stage) in stages.iter().enumerate() {
+        for i in 0..DPI_STAGE_COUNT {
+            let stage = stages.get(i).copied().unwrap_or(0);
             let at = STAGES_AT + i * STAGE_LEN;
             bytes[at..at + 2].copy_from_slice(&stage.to_le_bytes());
             bytes[at + 2..at + 4].copy_from_slice(&stage.to_le_bytes());
         }
-        if let Some(marker) = marker {
-            for i in stages.len()..DPI_STAGE_COUNT {
-                let at = STAGES_AT + i * STAGE_LEN;
-                bytes[at..at + 2].copy_from_slice(&marker.to_le_bytes());
-                bytes[at + 2..at + 4].copy_from_slice(&marker.to_le_bytes());
-            }
-        }
         let end = bytes.len() - CHECKSUM_LEN;
         let crc = crc16_ccitt(&bytes[..end]);
         bytes[end..].copy_from_slice(&crc.to_be_bytes());
-        Self(bytes)
+        Ok(Self(bytes))
     }
 
     /// Stage `stage`'s X (`axis` 0) or Y (`axis` 1) DPI.
@@ -227,34 +191,6 @@ impl ProfileSector {
         let at = STAGES_AT + stage * STAGE_LEN + axis * 2;
         u16::from_le_bytes([self.0[at], self.0[at + 1]])
     }
-}
-
-/// Five stages for a profile from any one to five presets: the unused slots
-/// repeat the last preset. How a mouse's own software marks unused slots is not
-/// known, so this stays within values the user chose. `default` indexes
-/// `presets`, not the padded slots.
-pub fn padded_stages(
-    presets: &[u16],
-    default: u8,
-) -> Result<([u16; DPI_STAGE_COUNT], u8), ProfileError> {
-    let Some(&last) = presets.last() else {
-        return Err(ProfileError::NoStages);
-    };
-    if presets.len() > DPI_STAGE_COUNT {
-        return Err(ProfileError::TooManyStages(presets.len()));
-    }
-    if let Some(&zero) = presets.iter().find(|&&stage| stage == 0) {
-        return Err(ProfileError::BadStage(zero));
-    }
-    if usize::from(default) >= presets.len() {
-        return Err(ProfileError::DefaultOutOfRange {
-            default,
-            count: presets.len(),
-        });
-    }
-    let mut stages = [last; DPI_STAGE_COUNT];
-    stages[..presets.len()].copy_from_slice(presets);
-    Ok((stages, default))
 }
 
 /// Whether the mouse lets us write `sector`: only one of the profile sectors
@@ -611,84 +547,14 @@ mod tests {
         );
     }
 
-    /// For now a short list is refused, not guessed at: the unused slots'
-    /// encoding is not known, and a wrong guess would be written to flash.
+    // -- fewer than five stages ---------------------------------------------
+
+    /// Confirmed on a G PRO 2 LIGHTSPEED: with two stages written and the
+    /// other three slots zero, the DPI button toggles between the two.
     #[test]
-    fn fewer_than_five_stages_are_refused_for_now() {
-        for count in 1..DPI_STAGE_COUNT {
-            let stages: Vec<u16> = (1..=count)
-                .map(|n| u16::try_from(n).unwrap() * 400)
-                .collect();
-            assert_eq!(
-                stock().with_dpi_stages(&stages, 0),
-                Err(ProfileError::FewerThanFiveStages(count)),
-                "{count} stages"
-            );
-        }
-    }
-
-    // -- padding a short preset list to the five slots the profile holds ----
-
-    #[test]
-    fn a_full_list_is_unchanged() {
-        let full = [400, 800, 1600, 3200, 6000];
-        assert_eq!(padded_stages(&full, 3), Ok((full, 3)));
-    }
-
-    /// The missing slots repeat the last preset, so cycling goes round the
-    /// presets and then sits on the last one, never on a value the user did
-    /// not choose.
-    #[test]
-    fn a_short_list_repeats_its_last_preset() {
-        assert_eq!(
-            padded_stages(&[800, 3200], 1),
-            Ok(([800, 3200, 3200, 3200, 3200], 1))
-        );
-        assert_eq!(
-            padded_stages(&[1600], 0),
-            Ok(([1600, 1600, 1600, 1600, 1600], 0))
-        );
-    }
-
-    #[test]
-    fn the_default_must_name_one_of_the_given_presets_not_a_padded_slot() {
-        assert_eq!(
-            padded_stages(&[800, 3200], 2),
-            Err(ProfileError::DefaultOutOfRange {
-                default: 2,
-                count: 2
-            })
-        );
-    }
-
-    #[test]
-    fn an_empty_zero_or_oversized_list_is_refused() {
-        assert_eq!(padded_stages(&[], 0), Err(ProfileError::NoStages));
-        assert_eq!(padded_stages(&[0, 800], 0), Err(ProfileError::BadStage(0)));
-        assert_eq!(
-            padded_stages(&[1, 2, 3, 4, 5, 6], 0),
-            Err(ProfileError::TooManyStages(6))
-        );
-    }
-
-    /// A padded list goes through the ordinary five-stage edit.
-    #[test]
-    fn a_padded_list_writes_like_any_five_stages() {
-        let (stages, default) = padded_stages(&[800, 3200], 1).unwrap();
-        let edited = stock().with_dpi_stages(&stages, default).unwrap();
-        assert_eq!(edited.dpi_stages(), [800, 3200, 3200, 3200, 3200]);
-        assert_eq!(edited.default_stage(), 1);
-    }
-
-    // -- experiment: marking unused slots -----------------------------------
-
-    /// Only the presets are real stages; every unused slot (both axes) holds
-    /// the marker, and lift-off, other bytes and the checksum behave as in an
-    /// ordinary edit.
-    #[test]
-    fn unused_slots_hold_the_marker_on_both_axes() {
+    fn fewer_than_five_stages_zero_the_unused_slots_on_both_axes() {
         let before = stock();
-        let edited = before.with_unused_marker(&[800, 3200], 1, 0).unwrap();
+        let edited = before.with_dpi_stages(&[800, 3200], 1).unwrap();
         assert_eq!(edited.dpi_stages(), [800, 3200, 0, 0, 0]);
         assert_eq!(edited.default_stage(), 1);
         let bytes = edited.as_bytes();
@@ -704,41 +570,33 @@ mod tests {
         );
     }
 
+    /// The bytes the mouse holds after the hardware check: the real profile
+    /// with stages 800 and 3200 ends in the checksum `56 27`.
     #[test]
-    fn an_ffff_marker_fills_unused_slots_with_ffff() {
-        let edited = stock().with_unused_marker(&[800, 3200], 0, 0xffff).unwrap();
-        assert_eq!(edited.dpi_stages(), [800, 3200, 0xffff, 0xffff, 0xffff]);
+    fn the_two_stage_profile_matches_what_the_mouse_stored() {
+        let real = ProfileSector::parse(&real_profile(), SECTOR_SIZE).unwrap();
+        let edited = real.with_dpi_stages(&[800, 3200], 0).unwrap();
+        let bytes = edited.as_bytes();
+        assert_eq!(&bytes[bytes.len() - 2..], &[0x56, 0x27]);
     }
 
     #[test]
-    fn marking_still_refuses_what_a_plain_edit_refuses() {
-        let s = stock();
-        assert_eq!(s.with_unused_marker(&[], 0, 0), Err(ProfileError::NoStages));
-        assert_eq!(
-            s.with_unused_marker(&[800, 0], 0, 0),
-            Err(ProfileError::BadStage(0))
-        );
-        assert_eq!(
-            s.with_unused_marker(&[1, 2, 3, 4, 5, 6], 0, 0),
-            Err(ProfileError::TooManyStages(6))
-        );
-        assert_eq!(
-            s.with_unused_marker(&[800, 3200], 2, 0),
-            Err(ProfileError::DefaultOutOfRange { default: 2, count: 2 })
-        );
+    fn every_count_from_one_to_five_is_accepted() {
+        for count in 1..=DPI_STAGE_COUNT {
+            let stages: Vec<u16> = (1..=count)
+                .map(|n| u16::try_from(n).unwrap() * 400)
+                .collect();
+            let edited = stock().with_dpi_stages(&stages, 0).unwrap();
+            assert_eq!(edited.presets(), stages, "{count} stages");
+        }
     }
 
+    /// The stages in use are those before the first unused slot.
     #[test]
-    fn marking_refuses_a_profile_with_split_axes() {
-        let mut bytes = sector_with([400, 800, 1600, 3200, 6400], 0);
-        let y_of_stage_2 = STAGES_AT + 2 * STAGE_LEN + 2;
-        bytes[y_of_stage_2..y_of_stage_2 + 2].copy_from_slice(&1200_u16.to_le_bytes());
-        seal(&mut bytes);
-        let split = ProfileSector::parse(&bytes, SECTOR_SIZE).unwrap();
-        assert_eq!(
-            split.with_unused_marker(&[800, 3200], 0, 0),
-            Err(ProfileError::SplitAxes(2))
-        );
+    fn the_presets_stop_at_the_first_unused_slot() {
+        assert_eq!(stock().presets(), [400, 800, 1600, 3200, 6400]);
+        let two = stock().with_dpi_stages(&[800, 3200], 0).unwrap();
+        assert_eq!(two.presets(), [800, 3200]);
     }
 
     /// An edit to a stage stored with different X and Y would silently flatten
@@ -754,18 +612,6 @@ mod tests {
             split.with_dpi_stages(&[400, 800, 1600, 3200, 6400], 0),
             Err(ProfileError::SplitAxes(2))
         );
-    }
-
-    /// How a profile with fewer than five stages stores the unused slots is
-    /// still unknown: the dumped profile uses all five, and G HUB may pad with
-    /// zeros, a repeat of the last stage, or 0xffff. When a profile with fewer
-    /// stages has been dumped, this replaces the refusal above.
-    #[test]
-    #[ignore = "needs a dump of a profile with fewer than five stages"]
-    fn fewer_than_five_stages_fill_the_unused_slots_the_way_the_mouse_does() {
-        let edited = stock().with_dpi_stages(&[800, 1600, 3200], 0).unwrap();
-        let _ = edited.dpi_stages();
-        todo!("assert the unused slots once the dump shows the encoding");
     }
 
     // -- which sector may be written ---------------------------------------
