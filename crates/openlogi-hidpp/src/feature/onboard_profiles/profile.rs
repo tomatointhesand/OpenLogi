@@ -186,6 +186,34 @@ impl ProfileSector {
     }
 }
 
+/// Five stages for a profile from any one to five presets: the unused slots
+/// repeat the last preset. How a mouse's own software marks unused slots is not
+/// known, so this stays within values the user chose. `default` indexes
+/// `presets`, not the padded slots.
+pub fn padded_stages(
+    presets: &[u16],
+    default: u8,
+) -> Result<([u16; DPI_STAGE_COUNT], u8), ProfileError> {
+    let Some(&last) = presets.last() else {
+        return Err(ProfileError::NoStages);
+    };
+    if presets.len() > DPI_STAGE_COUNT {
+        return Err(ProfileError::TooManyStages(presets.len()));
+    }
+    if let Some(&zero) = presets.iter().find(|&&stage| stage == 0) {
+        return Err(ProfileError::BadStage(zero));
+    }
+    if usize::from(default) >= presets.len() {
+        return Err(ProfileError::DefaultOutOfRange {
+            default,
+            count: presets.len(),
+        });
+    }
+    let mut stages = [last; DPI_STAGE_COUNT];
+    stages[..presets.len()].copy_from_slice(presets);
+    Ok((stages, default))
+}
+
 /// Whether the mouse lets us write `sector`: only one of the profile sectors
 /// listed in its user directory (`profile_sectors`). Never the directory
 /// itself at `0x0000`, never the ROM area from `0x0100`, and never a sector
@@ -554,6 +582,59 @@ mod tests {
                 "{count} stages"
             );
         }
+    }
+
+    // -- padding a short preset list to the five slots the profile holds ----
+
+    #[test]
+    fn a_full_list_is_unchanged() {
+        let full = [400, 800, 1600, 3200, 6000];
+        assert_eq!(padded_stages(&full, 3), Ok((full, 3)));
+    }
+
+    /// The missing slots repeat the last preset, so cycling goes round the
+    /// presets and then sits on the last one, never on a value the user did
+    /// not choose.
+    #[test]
+    fn a_short_list_repeats_its_last_preset() {
+        assert_eq!(
+            padded_stages(&[800, 3200], 1),
+            Ok(([800, 3200, 3200, 3200, 3200], 1))
+        );
+        assert_eq!(
+            padded_stages(&[1600], 0),
+            Ok(([1600, 1600, 1600, 1600, 1600], 0))
+        );
+    }
+
+    #[test]
+    fn the_default_must_name_one_of_the_given_presets_not_a_padded_slot() {
+        assert_eq!(
+            padded_stages(&[800, 3200], 2),
+            Err(ProfileError::DefaultOutOfRange {
+                default: 2,
+                count: 2
+            })
+        );
+    }
+
+    #[test]
+    fn an_empty_zero_or_oversized_list_is_refused() {
+        assert_eq!(padded_stages(&[], 0), Err(ProfileError::NoStages));
+        assert_eq!(padded_stages(&[0, 800], 0), Err(ProfileError::BadStage(0)));
+        assert_eq!(
+            padded_stages(&[1, 2, 3, 4, 5, 6], 0),
+            Err(ProfileError::TooManyStages(6))
+        );
+    }
+
+    /// A padded list goes through the ordinary five-stage edit.
+    #[test]
+    fn a_padded_list_writes_like_any_five_stages() {
+        let (stages, default) = padded_stages(&[800, 3200], 1).unwrap();
+        let edited = stock().with_dpi_stages(&stages, default).unwrap();
+        assert_eq!(edited.dpi_stages(), [800, 3200, 3200, 3200, 3200]);
+        assert_eq!(edited.default_stage(), 1);
     }
 
     /// An edit to a stage stored with different X and Y would silently flatten
