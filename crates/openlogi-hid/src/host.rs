@@ -165,6 +165,38 @@ pub async fn get_onboard(route: &DeviceRoute) -> Result<OnboardState, WriteError
     device::get_onboard(&*native_backend(), route).await
 }
 
+/// Read one onboard profile's sector of the mouse `route` reaches. Writes nothing.
+pub async fn dump_profile(
+    route: &DeviceRoute,
+    index: openlogi_core::hid::ProfileIndex,
+) -> Result<
+    openlogi_device::write::profile_edit::ProfileDump,
+    openlogi_device::write::profile_edit::ProfileEditError,
+> {
+    openlogi_device::write::profile_edit::dump_profile(&*native_backend(), route, index).await
+}
+
+/// Replace one onboard profile's sector, through the guarded write; returns
+/// the backup of what was there.
+pub async fn write_profile(
+    route: &DeviceRoute,
+    index: openlogi_core::hid::ProfileIndex,
+    new: &openlogi_device::write::profile_edit::ProfileSector,
+) -> Result<
+    openlogi_device::write::profile_edit::SectorBackup,
+    openlogi_device::write::profile_edit::ProfileEditError,
+> {
+    openlogi_device::write::profile_edit::write_profile(&*native_backend(), route, index, new).await
+}
+
+/// Put a profile sector backup back, through the same guards.
+pub async fn restore_profile(
+    route: &DeviceRoute,
+    backup: &openlogi_device::write::profile_edit::SectorBackup,
+) -> Result<(), openlogi_device::write::profile_edit::ProfileEditError> {
+    openlogi_device::write::profile_edit::restore_profile(&*native_backend(), route, backup).await
+}
+
 /// Read the HID++ `0x8110` slot mapping of the mouse `route` reaches and
 /// start its button spy, unless the mouse is in host mode.
 pub async fn watch_button_spy(route: &DeviceRoute) -> Result<ButtonSpyWatch, ButtonSpyError> {
