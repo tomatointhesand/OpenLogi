@@ -1,6 +1,9 @@
 //! Implements the `OnboardProfiles` feature (ID `0x8100`).
 //!
-//! Reverse-engineered (libratbag), checked on a G502 LIGHTSPEED. Never writes flash.
+//! Reverse-engineered (libratbag), checked on a G502 LIGHTSPEED. The reads are
+//! checked on a G PRO 2 LIGHTSPEED too. The memory-write functions (6, 7 and
+//! 8) are libratbag's description only, and are used solely through
+//! [`profile_io`], which guards every write.
 
 pub mod profile;
 pub mod profile_io;
@@ -18,6 +21,9 @@ const FN_GET_MODE: u8 = 2;
 const FN_SET_CURRENT_PROFILE: u8 = 3;
 const FN_GET_CURRENT_PROFILE: u8 = 4;
 const FN_MEMORY_READ: u8 = 5;
+const FN_MEMORY_ADDR_WRITE: u8 = 6;
+const FN_MEMORY_WRITE: u8 = 7;
+const FN_MEMORY_WRITE_END: u8 = 8;
 
 const USER_DIRECTORY_SECTOR: u16 = 0x0000;
 const ROM_DIRECTORY_SECTOR: u16 = 0x0100;
@@ -27,6 +33,16 @@ const NAME_OFFSET: u16 = 0xa0;
 const NAME_LEN: usize = 48;
 // What G HUB writes into an unnamed profile.
 const UNNAMED_PLACEHOLDER: &str = "PROFILE_NAME_DEFAULT";
+
+/// The arguments of the begin-write call: sector, offset and length, each
+/// big-endian, then zeros.
+fn write_begin_args(sector: u16, offset: u16, len: u16) -> [u8; 16] {
+    let mut args = [0; 16];
+    args[0..2].copy_from_slice(&sector.to_be_bytes());
+    args[2..4].copy_from_slice(&offset.to_be_bytes());
+    args[4..6].copy_from_slice(&len.to_be_bytes());
+    args
+}
 
 /// Implements the `OnboardProfiles` / `0x8100` feature.
 #[derive(Clone, Feature)]
@@ -141,6 +157,33 @@ impl OnboardProfilesFeature {
             .extend_payload())
     }
 
+    /// Starts a write of `len` bytes at `offset` in `sector`. Follow with the
+    /// bytes in 16-byte chunks, then [`Self::end_memory_write`].
+    pub async fn begin_memory_write(
+        &self,
+        sector: u16,
+        offset: u16,
+        len: u16,
+    ) -> Result<(), Hidpp20Error> {
+        self.endpoint
+            .call_long(FN_MEMORY_ADDR_WRITE, write_begin_args(sector, offset, len))
+            .await?;
+        Ok(())
+    }
+
+    /// Sends the next 16 bytes of the write begun with
+    /// [`Self::begin_memory_write`].
+    pub async fn write_memory_chunk(&self, chunk: [u8; 16]) -> Result<(), Hidpp20Error> {
+        self.endpoint.call_long(FN_MEMORY_WRITE, chunk).await?;
+        Ok(())
+    }
+
+    /// Finishes the write begun with [`Self::begin_memory_write`].
+    pub async fn end_memory_write(&self) -> Result<(), Hidpp20Error> {
+        self.endpoint.call(FN_MEMORY_WRITE_END, [0; 3]).await?;
+        Ok(())
+    }
+
     /// Reads the user directory, or the factory one if blank.
     pub async fn read_directory(
         &self,
@@ -237,9 +280,74 @@ fn name_from_bytes(bytes: &[u8]) -> Option<String> {
     (!name.is_empty() && name != UNNAMED_PLACEHOLDER).then(|| name.to_string())
 }
 
+#[async_trait::async_trait]
+impl profile_io::ProfileMemory for OnboardProfilesFeature {
+    async fn read(
+        &self,
+        sector: u16,
+        offset: u16,
+    ) -> Result<[u8; profile_io::CHUNK], profile_io::MemoryError> {
+        self.read_memory(sector, offset)
+            .await
+            .map_err(|error| memory_error(&error))
+    }
+
+    async fn begin_write(
+        &self,
+        sector: u16,
+        offset: u16,
+        len: u16,
+    ) -> Result<(), profile_io::MemoryError> {
+        self.begin_memory_write(sector, offset, len)
+            .await
+            .map_err(|error| memory_error(&error))
+    }
+
+    async fn write_chunk(
+        &self,
+        chunk: [u8; profile_io::CHUNK],
+    ) -> Result<(), profile_io::MemoryError> {
+        self.write_memory_chunk(chunk)
+            .await
+            .map_err(|error| memory_error(&error))
+    }
+
+    async fn end_write(&self) -> Result<(), profile_io::MemoryError> {
+        self.end_memory_write()
+            .await
+            .map_err(|error| memory_error(&error))
+    }
+}
+
+fn memory_error(error: &Hidpp20Error) -> profile_io::MemoryError {
+    profile_io::MemoryError(error.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_write_functions_are_numbered_after_the_read() {
+        assert_eq!(
+            [
+                FN_MEMORY_READ,
+                FN_MEMORY_ADDR_WRITE,
+                FN_MEMORY_WRITE,
+                FN_MEMORY_WRITE_END
+            ],
+            [5, 6, 7, 8]
+        );
+    }
+
+    #[test]
+    fn begin_write_carries_sector_offset_and_length_big_endian() {
+        assert_eq!(
+            write_begin_args(0x0102, 0x0010, 255),
+            [1, 2, 0, 0x10, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
+        assert_eq!(write_begin_args(0, 0, 0), [0; 16]);
+    }
 
     #[test]
     fn decodes_g502_lightspeed_info() {
