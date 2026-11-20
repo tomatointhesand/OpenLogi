@@ -69,8 +69,17 @@ impl AppState {
     /// `0x8060` takes a write only while OpenLogi controls the mouse.
     #[must_use]
     pub fn current_report_rate_locked(&self) -> bool {
-        self.current_onboard_supported()
-            && self.current_onboard_active() != Some(OnboardMemory::Off)
+        profile_owns_pointer(
+            self.current_onboard_supported(),
+            self.current_onboard_active(),
+        )
+    }
+
+    /// Whether the mouse's stored profile owns its DPI: the DPI write
+    /// (`0x2202`) is refused while the mouse runs a profile.
+    #[must_use]
+    pub fn current_dpi_locked(&self) -> bool {
+        self.current_report_rate_locked()
     }
 
     pub fn commit_onboard_memory(&mut self, memory: OnboardMemory) -> StateEvents {
@@ -148,6 +157,12 @@ impl AppState {
     }
 }
 
+/// Whether a profile stored on the mouse, not OpenLogi, owns its pointer
+/// settings: the mouse has onboard profiles and OpenLogi is not in control.
+fn profile_owns_pointer(onboard_supported: bool, active: Option<OnboardMemory>) -> bool {
+    onboard_supported && active != Some(OnboardMemory::Off)
+}
+
 /// The mode the mouse reports, or `requested` until it has been read.
 fn active_memory(
     reading: Option<&OnboardState>,
@@ -193,6 +208,29 @@ mod tests {
             active_memory(Some(&in_host), Some(OnboardMemory::Profile(profile(1)))),
             Some(OnboardMemory::Off)
         );
+    }
+
+    /// A stored profile owns the DPI and the report rate whenever OpenLogi is
+    /// not in control; a mouse without onboard profiles is never locked.
+    #[test]
+    fn a_profile_owns_the_pointer_unless_openlogi_controls_it() {
+        assert!(profile_owns_pointer(
+            true,
+            Some(OnboardMemory::Profile(profile(1)))
+        ));
+        assert!(!profile_owns_pointer(true, Some(OnboardMemory::Off)));
+        assert!(!profile_owns_pointer(
+            false,
+            Some(OnboardMemory::Profile(profile(1)))
+        ));
+        assert!(!profile_owns_pointer(false, None));
+    }
+
+    /// Before the mode is known the mouse is assumed to run its profile, as
+    /// the report-rate row already does.
+    #[test]
+    fn an_unknown_mode_counts_as_a_profile() {
+        assert!(profile_owns_pointer(true, None));
     }
 
     #[test]

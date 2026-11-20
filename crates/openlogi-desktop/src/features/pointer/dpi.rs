@@ -65,6 +65,9 @@ struct DpiPanelSnapshot {
     /// device sits in `Unknown` forever (discovery can't start without a
     /// route), so the UI must say "offline" rather than "reading…".
     reachable: bool,
+    /// Whether the mouse's stored profile owns the DPI, so the live controls
+    /// would only be refused.
+    locked: bool,
 }
 
 impl DpiPanel {
@@ -177,6 +180,13 @@ impl DpiPanel {
     fn dpi_section(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let snapshot = dpi_panel_snapshot(cx);
         let pal = theme::palette(cx);
+
+        // The mouse runs a stored profile: it refuses live DPI writes, so show
+        // what it holds instead of controls that would fail.
+        if snapshot.locked {
+            self.slider = None;
+            return locked_dpi_section(pal);
+        }
 
         if let (DpiLoad::Ready(info), Some(key)) = (&snapshot.status, &snapshot.device_key) {
             self.ensure_slider(key, &info.capabilities, snapshot.dpi, window, cx);
@@ -338,6 +348,7 @@ fn dpi_panel_snapshot(cx: &mut Context<DpiPanel>) -> DpiPanelSnapshot {
                 dpi: s.dpi(),
                 presets: s.dpi_presets(),
                 reachable: record.route.is_some(),
+                locked: s.current_dpi_locked(),
             })
         })
         .unwrap_or_else(|| DpiPanelSnapshot {
@@ -346,6 +357,7 @@ fn dpi_panel_snapshot(cx: &mut Context<DpiPanel>) -> DpiPanelSnapshot {
             presets: Vec::new(),
             status: DpiLoad::Unsupported(tr!("device.no_active_device").to_string()),
             reachable: false,
+            locked: false,
         })
 }
 
@@ -420,6 +432,27 @@ fn slider_element(
             status_line(tr!("pointer.adjustable_dpi_unsupported"), pal).into_any_element()
         }
     }
+}
+
+/// The DPI row while a stored profile owns it. The app's own DPI is not what
+/// the mouse is using then, so no value is shown, only who sets it.
+fn locked_dpi_section(pal: Palette) -> AnyElement {
+    v_flex()
+        .gap_1()
+        .w_full()
+        .child(
+            div()
+                .text_body()
+                .text_color(pal.text_primary)
+                .child(tr!("pointer.dpi")),
+        )
+        .child(
+            div()
+                .text_caption()
+                .text_color(pal.text_muted)
+                .child(tr!("pointer.report_rate_onboard")),
+        )
+        .into_any_element()
 }
 
 const CHIP_H: f32 = 28.;
