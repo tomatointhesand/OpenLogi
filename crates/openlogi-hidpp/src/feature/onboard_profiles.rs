@@ -3,6 +3,7 @@
 //! Reverse-engineered (libratbag), checked on a G502 LIGHTSPEED. Never writes flash.
 
 pub mod profile;
+pub mod profile_io;
 
 use std::num::NonZeroU8;
 
