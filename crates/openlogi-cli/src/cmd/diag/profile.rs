@@ -39,6 +39,16 @@ pub fn parse_dpi_list(text: &str) -> Result<Vec<u16>, String> {
         .collect()
 }
 
+/// Parse `--unused-marker`: what to put in the DPI slots that are not used.
+/// Only the two values worth trying are accepted.
+pub fn parse_marker(text: &str) -> Result<u16, String> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "0" | "zero" => Ok(0),
+        "ffff" | "0xffff" => Ok(0xffff),
+        other => Err(format!("{other:?} is not a marker: use 0 or ffff")),
+    }
+}
+
 /// The file a backup of `profile` on `device` taken at `unix_secs` is saved
 /// as: a plain name with no path separators, whatever the device is called.
 #[must_use]
@@ -156,6 +166,10 @@ pub struct ProfileWriteArgs {
     /// The stage the mouse starts on, 0-based.
     #[arg(long = "default-stage", value_name = "N")]
     pub default_stage: u8,
+    /// Experimental: write fewer than five stages and put this (0 or ffff) in
+    /// the unused slots, to find out how the mouse marks them.
+    #[arg(long, value_name = "0|ffff")]
+    pub unused_marker: Option<String>,
     /// Where the backup of the current profile is saved first.
     #[arg(long, value_name = "DIR")]
     pub backup_dir: Option<PathBuf>,
@@ -252,7 +266,13 @@ pub async fn run_write(args: ProfileWriteArgs) -> Result<()> {
                 args.profile
             )
         })?;
-    let new = current.with_dpi_stages(&stages, args.default_stage)?;
+    let new = match args.unused_marker.as_deref() {
+        Some(text) => {
+            let marker = parse_marker(text).map_err(|e| anyhow!(e))?;
+            current.with_unused_marker(&stages, args.default_stage, marker)?
+        }
+        None => current.with_dpi_stages(&stages, args.default_stage)?,
+    };
     println!("profile {} (sector {:#06x}):", args.profile, dump.sector);
     println!("{}", render_plan(&current, &new));
     if current == new {
@@ -339,6 +359,23 @@ mod tests {
         ] {
             let error = parse_dpi_list(text).unwrap_err();
             assert!(!error.is_empty(), "{text:?} had no reason");
+        }
+    }
+
+    // -- the unused-slot marker --------------------------------------------
+
+    #[test]
+    fn a_marker_is_zero_or_ffff() {
+        assert_eq!(parse_marker("0").unwrap(), 0);
+        assert_eq!(parse_marker("zero").unwrap(), 0);
+        assert_eq!(parse_marker("ffff").unwrap(), 0xffff);
+        assert_eq!(parse_marker("0xFFFF").unwrap(), 0xffff);
+    }
+
+    #[test]
+    fn any_other_marker_is_refused() {
+        for text in ["", "1", "400", "fffe", "-1", "ff"] {
+            assert!(parse_marker(text).is_err(), "{text:?}");
         }
     }
 

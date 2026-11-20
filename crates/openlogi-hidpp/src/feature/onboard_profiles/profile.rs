@@ -166,6 +166,42 @@ impl ProfileSector {
         if let Some(split) = (0..DPI_STAGE_COUNT).find(|&i| self.axis(i, 0) != self.axis(i, 1)) {
             return Err(ProfileError::SplitAxes(split));
         }
+        Ok(self.sealed_with(stages, default, None))
+    }
+
+    /// An experimental edit: `presets` are the first stages and every unused
+    /// slot holds `marker` (both axes). How the mouse marks unused slots is
+    /// not known; this is how candidates are tried, on a mouse, with a backup.
+    pub fn with_unused_marker(
+        &self,
+        presets: &[u16],
+        default: u8,
+        marker: u16,
+    ) -> Result<Self, ProfileError> {
+        if presets.is_empty() {
+            return Err(ProfileError::NoStages);
+        }
+        if presets.len() > DPI_STAGE_COUNT {
+            return Err(ProfileError::TooManyStages(presets.len()));
+        }
+        if let Some(&zero) = presets.iter().find(|&&stage| stage == 0) {
+            return Err(ProfileError::BadStage(zero));
+        }
+        if usize::from(default) >= presets.len() {
+            return Err(ProfileError::DefaultOutOfRange {
+                default,
+                count: presets.len(),
+            });
+        }
+        if let Some(split) = (0..DPI_STAGE_COUNT).find(|&i| self.axis(i, 0) != self.axis(i, 1)) {
+            return Err(ProfileError::SplitAxes(split));
+        }
+        Ok(self.sealed_with(presets, default, Some(marker)))
+    }
+
+    /// The bytes with `stages` in the first slots, `marker` (if any) in the
+    /// rest, `default` set and the checksum recomputed. Inputs are validated.
+    fn sealed_with(&self, stages: &[u16], default: u8, marker: Option<u16>) -> Self {
         let mut bytes = self.0.clone();
         bytes[DEFAULT_STAGE_AT] = default;
         for (i, stage) in stages.iter().enumerate() {
@@ -173,10 +209,17 @@ impl ProfileSector {
             bytes[at..at + 2].copy_from_slice(&stage.to_le_bytes());
             bytes[at + 2..at + 4].copy_from_slice(&stage.to_le_bytes());
         }
+        if let Some(marker) = marker {
+            for i in stages.len()..DPI_STAGE_COUNT {
+                let at = STAGES_AT + i * STAGE_LEN;
+                bytes[at..at + 2].copy_from_slice(&marker.to_le_bytes());
+                bytes[at + 2..at + 4].copy_from_slice(&marker.to_le_bytes());
+            }
+        }
         let end = bytes.len() - CHECKSUM_LEN;
         let crc = crc16_ccitt(&bytes[..end]);
         bytes[end..].copy_from_slice(&crc.to_be_bytes());
-        Ok(Self(bytes))
+        Self(bytes)
     }
 
     /// Stage `stage`'s X (`axis` 0) or Y (`axis` 1) DPI.
@@ -635,6 +678,67 @@ mod tests {
         let edited = stock().with_dpi_stages(&stages, default).unwrap();
         assert_eq!(edited.dpi_stages(), [800, 3200, 3200, 3200, 3200]);
         assert_eq!(edited.default_stage(), 1);
+    }
+
+    // -- experiment: marking unused slots -----------------------------------
+
+    /// Only the presets are real stages; every unused slot (both axes) holds
+    /// the marker, and lift-off, other bytes and the checksum behave as in an
+    /// ordinary edit.
+    #[test]
+    fn unused_slots_hold_the_marker_on_both_axes() {
+        let before = stock();
+        let edited = before.with_unused_marker(&[800, 3200], 1, 0).unwrap();
+        assert_eq!(edited.dpi_stages(), [800, 3200, 0, 0, 0]);
+        assert_eq!(edited.default_stage(), 1);
+        let bytes = edited.as_bytes();
+        for slot in 2..DPI_STAGE_COUNT {
+            let at = STAGES_AT + slot * STAGE_LEN;
+            assert_eq!(&bytes[at..at + 4], &[0, 0, 0, 0], "slot {slot}");
+            assert_eq!(bytes[at + 4], before.as_bytes()[at + 4], "lift-off {slot}");
+        }
+        let end = bytes.len() - CHECKSUM_LEN;
+        assert_eq!(
+            u16::from_be_bytes([bytes[end], bytes[end + 1]]),
+            crc16_ccitt(&bytes[..end])
+        );
+    }
+
+    #[test]
+    fn an_ffff_marker_fills_unused_slots_with_ffff() {
+        let edited = stock().with_unused_marker(&[800, 3200], 0, 0xffff).unwrap();
+        assert_eq!(edited.dpi_stages(), [800, 3200, 0xffff, 0xffff, 0xffff]);
+    }
+
+    #[test]
+    fn marking_still_refuses_what_a_plain_edit_refuses() {
+        let s = stock();
+        assert_eq!(s.with_unused_marker(&[], 0, 0), Err(ProfileError::NoStages));
+        assert_eq!(
+            s.with_unused_marker(&[800, 0], 0, 0),
+            Err(ProfileError::BadStage(0))
+        );
+        assert_eq!(
+            s.with_unused_marker(&[1, 2, 3, 4, 5, 6], 0, 0),
+            Err(ProfileError::TooManyStages(6))
+        );
+        assert_eq!(
+            s.with_unused_marker(&[800, 3200], 2, 0),
+            Err(ProfileError::DefaultOutOfRange { default: 2, count: 2 })
+        );
+    }
+
+    #[test]
+    fn marking_refuses_a_profile_with_split_axes() {
+        let mut bytes = sector_with([400, 800, 1600, 3200, 6400], 0);
+        let y_of_stage_2 = STAGES_AT + 2 * STAGE_LEN + 2;
+        bytes[y_of_stage_2..y_of_stage_2 + 2].copy_from_slice(&1200_u16.to_le_bytes());
+        seal(&mut bytes);
+        let split = ProfileSector::parse(&bytes, SECTOR_SIZE).unwrap();
+        assert_eq!(
+            split.with_unused_marker(&[800, 3200], 0, 0),
+            Err(ProfileError::SplitAxes(2))
+        );
     }
 
     /// An edit to a stage stored with different X and Y would silently flatten
