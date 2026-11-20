@@ -23,6 +23,7 @@ pub mod lighting;
 pub mod mouse_buttons;
 pub mod onboard;
 pub mod pointer_speed;
+pub mod profile;
 pub mod sidetone;
 pub mod smartshift;
 pub mod wheel;
@@ -50,6 +51,12 @@ pub enum DiagCmd {
     PointerSpeed(pointer_speed::PointerSpeedArgs),
     /// Read a G-series mouse's onboard profiles and mode.
     Onboard(onboard::OnboardArgs),
+    /// Read one onboard profile's sector and save a backup of it (read-only).
+    ProfileDump(profile::ProfileDumpArgs),
+    /// Rewrite one onboard profile's DPI stages (dry run unless --yes).
+    ProfileWrite(profile::ProfileWriteArgs),
+    /// Put a saved profile backup back on the mouse (dry run unless --yes).
+    ProfileRestore(profile::ProfileRestoreArgs),
     /// Print which HID++ 0x8110 slot each button of a G-series mouse sends.
     MouseButtons(mouse_buttons::MouseButtonsArgs),
     /// Switch a multi-host device through the running agent (HID++ 0x1814).
@@ -78,6 +85,9 @@ impl DiagCmd {
             Self::Wheel(args) => wheel::run(args).await,
             Self::PointerSpeed(args) => pointer_speed::run(args).await,
             Self::Onboard(args) => onboard::run(args).await,
+            Self::ProfileDump(args) => profile::run_dump(args).await,
+            Self::ProfileWrite(args) => profile::run_write(args).await,
+            Self::ProfileRestore(args) => profile::run_restore(args).await,
             Self::MouseButtons(args) => mouse_buttons::run(args).await,
             Self::HostSwitch(args) => host_switch::run(args).await,
             Self::Sidetone(args) => sidetone::run(args).await,
