@@ -273,6 +273,24 @@ impl ProfilePanel {
     }
 }
 
+/// The stage the mouse is using: the first of `stages` equal to the DPI it
+/// reports, or `None` when it reports none of them.
+#[must_use]
+pub fn active_stage(stages: &[Dpi], current: Dpi) -> Option<usize> {
+    stages.iter().position(|&stage| stage == current)
+}
+
+/// A backup file's folder and name, for a line of text: the full path is long
+/// and says nothing the folder and name do not.
+#[must_use]
+pub fn short_backup_path(path: &str) -> String {
+    let parts: Vec<&str> = path
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .collect();
+    parts[parts.len().saturating_sub(2)..].join("/")
+}
+
 impl AppState {
     /// The selected mouse's stored-profile DPI panel, once it has been asked for.
     #[must_use]
@@ -324,6 +342,25 @@ impl AppState {
             self.pointer.profile_panels.remove(&key);
         }
         self.request_current_profile_dpi()
+    }
+
+    /// Read the selected mouse's live DPI again, so the stage its DPI button
+    /// selected shows. Read-only.
+    pub(crate) fn refresh_live_dpi(&mut self) -> StateEvents {
+        if let Some(key) = self.current_record().map(DeviceRecord::device_key) {
+            self.pointer.reads.retry_dpi(&key);
+        }
+        StateEvents::none()
+    }
+
+    /// The DPI the selected mouse reports it is using now.
+    #[must_use]
+    pub fn live_dpi(&self) -> Option<Dpi> {
+        let key = self.current_record()?.device_key();
+        match self.dpi_load_for(&key) {
+            crate::state::DpiLoad::Ready(info) => Some(info.current),
+            _ => None,
+        }
     }
 
     /// Change the selected mouse's draft stages. Nothing reaches the mouse.
@@ -682,5 +719,46 @@ mod tests {
             d.set(0, dpi(900));
         });
         assert!(matches!(panel.save(), ProfileSave::Idle));
+    }
+
+    // -- which stage is active, and how a backup is named -------------------
+
+    #[test]
+    fn the_active_stage_is_the_one_the_mouse_reports() {
+        let stages = [dpi(800), dpi(3200)];
+        assert_eq!(active_stage(&stages, dpi(800)), Some(0));
+        assert_eq!(active_stage(&stages, dpi(3200)), Some(1));
+    }
+
+    #[test]
+    fn a_dpi_that_is_no_stage_makes_none_active() {
+        assert_eq!(active_stage(&[dpi(800), dpi(3200)], dpi(1030)), None);
+        assert_eq!(active_stage(&[], dpi(800)), None);
+    }
+
+    /// With the same value twice there is no telling which was pressed; the
+    /// first is shown.
+    #[test]
+    fn a_repeated_stage_shows_the_first() {
+        assert_eq!(active_stage(&[dpi(800), dpi(800)], dpi(800)), Some(0));
+    }
+
+    #[test]
+    fn a_backup_path_is_shortened_to_its_folder_and_file() {
+        assert_eq!(
+            short_backup_path("/home/me/.local/state/openlogi/profile-backups/b-p1-7.txt"),
+            "profile-backups/b-p1-7.txt"
+        );
+        assert_eq!(
+            short_backup_path(r"C:\Users\me\AppData\openlogi\profile-backups\b-p1-7.txt"),
+            "profile-backups/b-p1-7.txt"
+        );
+    }
+
+    #[test]
+    fn a_short_path_is_left_as_it_is() {
+        assert_eq!(short_backup_path("b-p1-7.txt"), "b-p1-7.txt");
+        assert_eq!(short_backup_path("dir/b.txt"), "dir/b.txt");
+        assert_eq!(short_backup_path(""), "");
     }
 }

@@ -19,7 +19,9 @@ use gpui_kit::component::{
 use openlogi_core::hid::{Dpi, DpiCapabilities};
 
 use super::dpi::parse_dpi_entry;
-use crate::state::{AppState, ProfileLoad, ProfilePanel, ProfileSave};
+use crate::state::{
+    AppState, ProfileLoad, ProfilePanel, ProfileSave, active_stage, short_backup_path,
+};
 use crate::ui::components::{PresetChip, control_input, save_cancel_footer};
 use crate::ui::status::{retry_line, status_line};
 use crate::ui::theme::{self, Palette, Typography as _};
@@ -31,6 +33,7 @@ pub(super) fn profile_section(pal: Palette, cx: &App) -> AnyElement {
     let panel = AppState::try_read(cx).and_then(|state| state.current_profile_panel().cloned());
     let capabilities =
         AppState::try_read(cx).and_then(|state| state.active_dpi_capabilities().cloned());
+    let live = AppState::try_read(cx).and_then(AppState::live_dpi);
     let body = match &panel {
         None => status_line(tr!("pointer.reading_supported_dpi_values"), pal).into_any_element(),
         Some(panel) => match panel.load() {
@@ -43,7 +46,7 @@ pub(super) fn profile_section(pal: Palette, cx: &App) -> AnyElement {
                 |cx| AppState::apply(cx, AppState::retry_profile_dpi),
             )
             .into_any_element(),
-            ProfileLoad::Ready(_) => editor(panel, capabilities, pal),
+            ProfileLoad::Ready(_) => editor(panel, capabilities, live, pal),
         },
     };
     v_flex()
@@ -65,12 +68,18 @@ pub(super) fn profile_section(pal: Palette, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-fn editor(panel: &ProfilePanel, capabilities: Option<DpiCapabilities>, pal: Palette) -> AnyElement {
+fn editor(
+    panel: &ProfilePanel,
+    capabilities: Option<DpiCapabilities>,
+    live: Option<Dpi>,
+    pal: Palette,
+) -> AnyElement {
     let Some(draft) = panel.draft() else {
         return div().into_any_element();
     };
     let saving = matches!(panel.save(), ProfileSave::Saving);
     let default = usize::from(draft.default_stage());
+    let active = live.and_then(|current| active_stage(draft.stages(), current));
     let chips: Vec<_> = draft
         .stages()
         .iter()
@@ -79,8 +88,11 @@ fn editor(panel: &ProfilePanel, capabilities: Option<DpiCapabilities>, pal: Pale
             stage_chip(
                 index,
                 stage,
-                index == default,
-                draft.can_remove(),
+                StageFlags {
+                    active: active == Some(index),
+                    default: index == default,
+                    can_remove: draft.can_remove(),
+                },
                 capabilities.clone(),
             )
         })
@@ -113,19 +125,14 @@ fn editor(panel: &ProfilePanel, capabilities: Option<DpiCapabilities>, pal: Pale
                 }),
         )
         .child(
-            h_flex()
-                .gap_2()
-                .items_center()
-                .child(
-                    Button::new("profile-dpi-save")
-                        .compact()
-                        .h(px(CHIP_H))
-                        .label(tr!("pointer.profile_dpi_save"))
-                        .disabled(!panel.can_save() || saving)
-                        .on_click(move |_, window, cx| open_confirm_dialog(window, cx, &number)),
-                )
-                .child(save_status(panel, pal)),
+            Button::new("profile-dpi-save")
+                .compact()
+                .h(px(CHIP_H))
+                .label(tr!("pointer.profile_dpi_save"))
+                .disabled(!panel.can_save() || saving)
+                .on_click(move |_, window, cx| open_confirm_dialog(window, cx, &number)),
         )
+        .child(save_status(panel, pal))
         .into_any_element()
 }
 
@@ -133,7 +140,7 @@ fn editor(panel: &ProfilePanel, capabilities: Option<DpiCapabilities>, pal: Pale
 fn save_status(panel: &ProfilePanel, pal: Palette) -> AnyElement {
     let text = match panel.save() {
         ProfileSave::Saved { backup } if !backup.is_empty() => {
-            Some(tr!("pointer.profile_dpi_saved", path => backup.clone()).to_string())
+            Some(tr!("pointer.profile_dpi_saved", path => short_backup_path(backup)).to_string())
         }
         ProfileSave::Failed(message) => {
             Some(tr!("pointer.profile_dpi_failed", message => message.clone()).to_string())
@@ -144,24 +151,47 @@ fn save_status(panel: &ProfilePanel, pal: Palette) -> AnyElement {
         ProfileSave::Idle | ProfileSave::Saving | ProfileSave::Saved { .. } => None,
     };
     div()
+        .w_full()
+        .min_w_0()
         .text_caption()
         .text_color(pal.text_muted)
         .children(text)
         .into_any_element()
 }
 
+/// What a stage chip shows besides its value.
+#[derive(Debug, Clone, Copy)]
+struct StageFlags {
+    /// The mouse is using this stage now (its DPI button selected it).
+    active: bool,
+    /// The mouse starts on this stage.
+    default: bool,
+    /// The stage can be taken out of the profile.
+    can_remove: bool,
+}
+
 /// One stage: its value (click to type another), a button to start on it, and
-/// a button to remove it. The stage the mouse starts on is drawn selected.
+/// a button to remove it. The stage in use is drawn selected; the one the
+/// mouse starts on says so.
 fn stage_chip(
     index: usize,
     stage: Dpi,
-    is_default: bool,
-    can_remove: bool,
+    flags: StageFlags,
     capabilities: Option<DpiCapabilities>,
 ) -> impl IntoElement {
+    let StageFlags {
+        active,
+        default: is_default,
+        can_remove,
+    } = flags;
     let remove_label = tr!("common.remove_named_item", name => format!("{stage} DPI"));
+    let label = if is_default {
+        format!("{stage} · {}", tr!("common.default"))
+    } else {
+        format!("{stage}")
+    };
     PresetChip::new(("profile-dpi-chip", index))
-        .selected(is_default)
+        .selected(active)
         .child(
             Button::new(("profile-dpi-stage", index))
                 .compact()
@@ -169,8 +199,8 @@ fn stage_chip(
                 .h_full()
                 .flex()
                 .items_center()
-                .label(format!("{stage}"))
-                .selected(is_default)
+                .label(label)
+                .selected(active)
                 .on_click(move |_, window, cx| {
                     if let Some(caps) = capabilities.clone() {
                         open_stage_dialog(window, cx, Some(index), stage, caps);

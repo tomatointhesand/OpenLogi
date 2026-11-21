@@ -44,7 +44,9 @@ pub use load::{
     BacklightLoad, DisableKeysLoad, DpiLoad, EasySwitchLoad, FnLockLoad, ForceSensingLoad,
     OnboardLoad, PointerSpeedLoad, ReportRateLoad, SidetoneLoad, SmartShiftLoad,
 };
-pub(crate) use profile_dpi::{ProfileLoad, ProfilePanel, ProfileSave};
+pub(crate) use profile_dpi::{
+    ProfileLoad, ProfilePanel, ProfileSave, active_stage, short_backup_path,
+};
 
 /// Result of confirming a SmartShift write by reading the value back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

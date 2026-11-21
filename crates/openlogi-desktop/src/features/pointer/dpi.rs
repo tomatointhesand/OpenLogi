@@ -38,6 +38,10 @@ pub struct DpiPanel {
     slider: Option<DpiSlider>,
     /// The pointer-speed slider of a mouse without adjustable DPI.
     pointer_speed: Option<PointerSpeedSlider>,
+    /// While a stored profile owns the DPI: re-reads the live DPI so the stage
+    /// its DPI button selected shows. Stops once the panel stops drawing.
+    live_poll: Option<gpui::Task<()>>,
+    last_drawn: std::time::Instant,
     _state_obs: Subscription,
 }
 
@@ -90,8 +94,39 @@ impl DpiPanel {
         Self {
             slider: None,
             pointer_speed: None,
+            live_poll: None,
+            last_drawn: std::time::Instant::now(),
             _state_obs: state_obs,
         }
+    }
+
+    /// How often the live DPI is re-read while a stored profile owns it.
+    const LIVE_POLL: std::time::Duration = std::time::Duration::from_secs(1);
+
+    /// Start re-reading the live DPI, once. The loop ends by itself when the
+    /// panel has not been drawn for a few seconds (another tab is showing).
+    fn start_live_poll(&mut self, cx: &mut Context<Self>) {
+        if self.live_poll.is_some() {
+            return;
+        }
+        self.live_poll = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Self::LIVE_POLL).await;
+                let idle = this
+                    .update(cx, |panel, _| {
+                        let idle = panel.last_drawn.elapsed() > std::time::Duration::from_secs(3);
+                        if idle {
+                            panel.live_poll = None;
+                        }
+                        idle
+                    })
+                    .unwrap_or(true);
+                if idle {
+                    break;
+                }
+                cx.update(|cx| AppState::apply(cx, AppState::refresh_live_dpi));
+            }
+        }));
     }
 
     fn ensure_slider(
@@ -182,11 +217,16 @@ impl DpiPanel {
     fn dpi_section(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let snapshot = dpi_panel_snapshot(cx);
         let pal = theme::palette(cx);
+        if !snapshot.locked {
+            self.live_poll = None;
+        }
 
         // The mouse runs a stored profile: it refuses live DPI writes, so show
         // what it holds instead of controls that would fail.
         if snapshot.locked {
             self.slider = None;
+            self.last_drawn = std::time::Instant::now();
+            self.start_live_poll(cx);
             return super::profile_dpi::profile_section(pal, cx);
         }
 
