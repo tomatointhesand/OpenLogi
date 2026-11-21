@@ -437,6 +437,7 @@ impl DeviceReads {
                 // Who owns the mouse may just have become known: a stored
                 // profile owns it, so ask for the stages that profile holds.
                 state.request_current_profile_dpi().emit(cx);
+                state.request_current_profile_led().emit(cx);
             }
         });
         self.onboard.insert(

@@ -433,6 +433,28 @@ impl Runtime {
                     });
                 });
             }
+            ipc::GuiUpdate::ProfileLedRead {
+                key,
+                profile,
+                result,
+            } => {
+                cx.update(|cx| {
+                    AppState::apply(cx, |state| {
+                        state.apply_profile_led_read(&key, profile, result)
+                    });
+                });
+            }
+            ipc::GuiUpdate::ProfileLedSaved {
+                key,
+                profile,
+                result,
+            } => {
+                cx.update(|cx| {
+                    AppState::apply(cx, |state| {
+                        state.apply_profile_led_saved(&key, profile, result)
+                    });
+                });
+            }
             ipc::GuiUpdate::DeviceUnpaired {
                 route,
                 intent,

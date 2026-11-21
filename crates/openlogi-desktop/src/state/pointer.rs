@@ -31,6 +31,8 @@ pub(super) struct PointerState {
     pub(super) next_force_sensing_write: u64,
     /// Each mouse's stored-profile DPI stages: what it holds and the draft.
     pub(super) profile_panels: HashMap<DeviceKey, super::profile_dpi::ProfilePanel>,
+    /// Each mouse's stored LED setting, once asked for.
+    pub(super) led_panels: HashMap<DeviceKey, super::profile_led::LedPanel>,
 }
 
 impl Default for PointerState {
@@ -46,6 +48,7 @@ impl Default for PointerState {
             pending_force_sensing_writes: HashMap::new(),
             next_force_sensing_write: 0,
             profile_panels: HashMap::new(),
+            led_panels: HashMap::new(),
         }
     }
 }

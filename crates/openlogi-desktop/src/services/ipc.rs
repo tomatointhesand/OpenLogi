@@ -45,7 +45,7 @@ use std::time::{Duration, Instant};
 use openlogi_core::hid::{
     BacklightState, DeviceRoute, DisableKeysState, Dpi, EasySwitchHosts, FnLockState,
     ForceSensingInfo, LightCommand, PointerSpeed, ProfileDpi, ProfileDpiError, ProfileDpiSaved,
-    ProfileIndex, ReportRateInfo, SidetoneLevel, WriteError,
+    ProfileIndex, ProfileLed, ProfileLedSaved, ReportRateInfo, SidetoneLevel, WriteError,
 };
 use openlogi_ipc::client::{self, ConnectError};
 use openlogi_ipc::{
@@ -74,11 +74,12 @@ pub use request::PollEventMonitor;
 pub use request::{
     CancelFlowPairing, CancelPairing, Command, ConfirmFlowPairing, LoadConfig, PairDevice,
     PairFlowPeer, ReadBacklight, ReadDisableKeys, ReadDpi, ReadEasySwitchHosts, ReadFnLock,
-    ReadForceSensing, ReadOnboard, ReadPointerSpeed, ReadProfileDpi, ReadReportRate, ReadSidetone,
-    ReadSmartShift, ReloadConfig, RenameEasySwitchHost, RequestAccessibilityPrompt,
-    RetryConnection, SetBacklight, SetDisableKeys, SetDpi, SetFnLock, SetForceSensing, SetLight,
-    SetLightManualPower, SetLighting, SetPointerSpeed, SetReportRate, SetSidetone, SetSmartShift,
-    StartFlowPairing, StartPairing, StopFlowPairing, UnpairDevice, WriteProfileDpi,
+    ReadForceSensing, ReadOnboard, ReadPointerSpeed, ReadProfileDpi, ReadProfileLed,
+    ReadReportRate, ReadSidetone, ReadSmartShift, ReloadConfig, RenameEasySwitchHost,
+    RequestAccessibilityPrompt, RetryConnection, SetBacklight, SetDisableKeys, SetDpi, SetFnLock,
+    SetForceSensing, SetLight, SetLightManualPower, SetLighting, SetPointerSpeed, SetReportRate,
+    SetSidetone, SetSmartShift, StartFlowPairing, StartPairing, StopFlowPairing, UnpairDevice,
+    WriteProfileDpi, WriteProfileLed,
 };
 
 /// Complete identity of one Disable Keys write/reload transaction.
@@ -258,6 +259,26 @@ pub enum GuiUpdate {
         profile: ProfileIndex,
         /// The read-back and the backup file, or why the save did not land.
         result: Result<ProfileDpiSaved, ProfileDpiError>,
+    },
+    /// The fixed LED setting a mouse's profile stores, as read. Answers
+    /// [`ReadProfileLed`].
+    ProfileLedRead {
+        /// The mouse that was read.
+        key: DeviceKey,
+        /// The profile that was read: [`ReadProfileLed::profile`].
+        profile: ProfileIndex,
+        /// The setting, or why it could not be read.
+        result: Result<ProfileLed, ProfileDpiError>,
+    },
+    /// What a mouse reports after the GUI saved an LED setting into its
+    /// profile. Answers [`WriteProfileLed`].
+    ProfileLedSaved {
+        /// The mouse that was written.
+        key: DeviceKey,
+        /// The profile that was written: [`WriteProfileLed::profile`].
+        profile: ProfileIndex,
+        /// The read-back and the backup file, or why the save did not land.
+        result: Result<ProfileLedSaved, ProfileDpiError>,
     },
     /// A pairing command could not be delivered, so no session will ever appear
     /// in the observed state to explain the silence. Reported locally rather

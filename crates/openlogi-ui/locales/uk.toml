@@ -752,6 +752,8 @@ applying_light_setting = "Застосування налаштування св
 auto_on_with_camera = "Автоувімкнення разом із камерою"
 camera_light_auto_description = "Вмикати це світло, поки використовується будь-яка камера, і вимикати, коли камери зупиняються."
 keyboard_lighting_description = "Застосовується OpenLogi, поки він працює, і не зберігається в клавіатурі."
+profile_led_stored = "Миша зберігає %{color} з яскравістю %{brightness}%, коли OpenLogi не запущено."
+profile_led_unsaved = "Цей колір і яскравість ще не збережено на миші."
 
 [action_ring]
 actions_ring = "Кільце дій"

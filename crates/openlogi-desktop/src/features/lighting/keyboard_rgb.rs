@@ -121,6 +121,7 @@ impl Render for LightingPanel {
                     ["100%"],
                 ),
             )
+            .children(super::profile_led::stored_section(&lighting, pal, cx))
     }
 }
 

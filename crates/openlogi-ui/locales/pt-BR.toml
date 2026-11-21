@@ -752,6 +752,8 @@ applying_light_setting = "Aplicando configuração da luz…"
 auto_on_with_camera = "Acender com a câmera"
 camera_light_auto_description = "Acenda a luz enquanto uma câmera estiver em uso e apague-a quando nenhuma estiver ativa."
 keyboard_lighting_description = "Aplicada pelo OpenLogi enquanto ele está em execução, sem ser salva no teclado."
+profile_led_stored = "O mouse mantém %{color} com %{brightness}% de brilho quando o OpenLogi não está em execução."
+profile_led_unsaved = "Esta cor e este brilho ainda não foram salvos no mouse."
 
 [action_ring]
 actions_ring = "Anel de ações"

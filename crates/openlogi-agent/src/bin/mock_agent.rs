@@ -64,7 +64,9 @@ use openlogi_core::device::{
     PairedDevice, StandaloneDevice, prettify_codename,
 };
 use openlogi_core::hid::{DisableKeysMask, DisableKeysState, HidppOperation};
-use openlogi_core::hid::{ProfileDpi, ProfileDpiError, ProfileDpiSaved, ProfileIndex};
+use openlogi_core::hid::{
+    ProfileDpi, ProfileDpiError, ProfileDpiSaved, ProfileIndex, ProfileLed, ProfileLedSaved,
+};
 use openlogi_core::single_instance::{self, InstanceError, Role};
 use openlogi_fixture::{DeviceProfile, FixtureError, ProfileDeviceSettings, ProfileSetting};
 use openlogi_hid::{
@@ -1626,6 +1628,32 @@ impl Agent for MockAgent {
         _default_stage: u8,
     ) -> Result<ProfileDpiSaved, ProfileDpiError> {
         info!(%route, "write_profile_dpi (no onboard memory in the mock)");
+        Err(ProfileDpiError::Device(WriteError::FeatureUnsupported {
+            feature_hex: 0x8100,
+        }))
+    }
+
+    async fn read_profile_led(
+        self,
+        _: Context,
+        route: DeviceRoute,
+        _profile: ProfileIndex,
+    ) -> Result<ProfileLed, ProfileDpiError> {
+        info!(%route, "read_profile_led (no onboard memory in the mock)");
+        Err(ProfileDpiError::Device(WriteError::FeatureUnsupported {
+            feature_hex: 0x8100,
+        }))
+    }
+
+    async fn write_profile_led(
+        self,
+        _: Context,
+        route: DeviceRoute,
+        _profile: ProfileIndex,
+        _color: [u8; 3],
+        _brightness: u8,
+    ) -> Result<ProfileLedSaved, ProfileDpiError> {
+        info!(%route, "write_profile_led (no onboard memory in the mock)");
         Err(ProfileDpiError::Device(WriteError::FeatureUnsupported {
             feature_hex: 0x8100,
         }))

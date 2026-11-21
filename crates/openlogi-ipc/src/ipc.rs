@@ -22,8 +22,8 @@ use openlogi_core::hid::{
     BacklightChange, BacklightState, DeviceRoute, DisableKeysMask, DisableKeysState, Dpi, DpiInfo,
     EasySwitchHosts, FnLockState, ForceSensingInfo, LightCommand, OnboardState, PairingError,
     PasskeyMethod, PointerSpeed, ProfileDpi, ProfileDpiError, ProfileDpiSaved, ProfileIndex,
-    ReceiverSelector, ReportRate, ReportRateInfo, ScrollWheelMode, SidetoneLevel, SmartShiftStatus,
-    WriteError,
+    ProfileLed, ProfileLedSaved, ReceiverSelector, ReportRate, ReportRateInfo, ScrollWheelMode,
+    SidetoneLevel, SmartShiftStatus, WriteError,
 };
 use serde::{Deserialize, Serialize};
 pub use succession::Identity;
@@ -198,7 +198,11 @@ pub use succession::Identity;
 /// v47: `Agent::{read_profile_dpi, write_profile_dpi}` appended, with
 ///      `ProfileDpi`, `ProfileDpiSaved` and `ProfileDpiError` — the DPI stages
 ///      of a G-series mouse's onboard profile, read and saved.
-pub const PROTOCOL_VERSION: u32 = 47;
+/// v48: `Agent::{read_profile_led, write_profile_led}` appended, with
+///      `ProfileLed` and `ProfileLedSaved` — the fixed LED colour and
+///      brightness of a G-series mouse's onboard profile, read and saved
+///      (failing with `ProfileDpiError`).
+pub const PROTOCOL_VERSION: u32 = 48;
 
 /// Environment variable through which the agent hands a supervised helper the
 /// run token it will serve, so the helper knows which agent it belongs to
@@ -1288,4 +1292,20 @@ pub trait Agent {
         stages: Vec<Dpi>,
         default_stage: u8,
     ) -> Result<ProfileDpiSaved, ProfileDpiError>;
+    /// Read the fixed LED colour and brightness stored in onboard profile
+    /// `profile` of the mouse on `route`. Read-only, and answered in either
+    /// mode; refused when the profile's LED is not one fixed colour.
+    async fn read_profile_led(
+        route: DeviceRoute,
+        profile: ProfileIndex,
+    ) -> Result<ProfileLed, ProfileDpiError>;
+    /// Save a fixed LED `color` (red, green, blue) and `brightness` (percent,
+    /// 0 to 100) into onboard profile `profile` of the mouse on `route`, with
+    /// every guard [`Agent::write_profile_dpi`] has.
+    async fn write_profile_led(
+        route: DeviceRoute,
+        profile: ProfileIndex,
+        color: [u8; 3],
+        brightness: u8,
+    ) -> Result<ProfileLedSaved, ProfileDpiError>;
 }

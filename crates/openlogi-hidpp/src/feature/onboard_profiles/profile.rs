@@ -24,6 +24,12 @@ const STAGES_AT: usize = 4;
 const STAGE_LEN: usize = 5;
 const CHECKSUM_LEN: usize = 2;
 /// The first sector number of the ROM area; nothing from here up is written.
+/// Where the LED setting sits: a mode byte, then the colour as red, green, blue.
+const LED_AT: usize = 0xd0;
+/// Where the LED brightness sits, as a percentage (0 to 100).
+const LED_BRIGHTNESS_AT: usize = 0xd8;
+/// The LED mode byte value for one fixed colour.
+const LED_FIXED: u8 = 1;
 const ROM_AREA: u16 = 0x0100;
 
 /// Why a profile could not be read, edited or written.
@@ -65,6 +71,15 @@ pub enum ProfileError {
     /// A stored stage whose X and Y differ, which an edit would flatten.
     #[error("stage {0} has different X and Y DPI; refusing to overwrite it")]
     SplitAxes(usize),
+    /// A sector with no LED setting at the known place.
+    #[error("this profile has no LED setting at the place this tool knows")]
+    NoLedSetting,
+    /// An LED mode that is not one fixed colour, which an edit would flatten.
+    #[error("the profile's LED mode is {0}, not a fixed colour; refusing to overwrite it")]
+    LedNotFixed(u8),
+    /// An LED brightness above 100 percent.
+    #[error("LED brightness is a percentage, {0} is above 100")]
+    BadBrightness(u8),
     /// A sector outside the mouse's profile sectors.
     #[error("sector {0:#06x} is not a profile sector this mouse lets us write")]
     SectorNotWritable(u16),
@@ -180,6 +195,55 @@ impl ProfileSector {
             bytes[at..at + 2].copy_from_slice(&stage.to_le_bytes());
             bytes[at + 2..at + 4].copy_from_slice(&stage.to_le_bytes());
         }
+        let end = bytes.len() - CHECKSUM_LEN;
+        let crc = crc16_ccitt(&bytes[..end]);
+        bytes[end..].copy_from_slice(&crc.to_be_bytes());
+        Ok(Self(bytes))
+    }
+
+    /// The stored LED colour as red, green, blue, when the profile holds one
+    /// fixed colour; `None` for any other LED mode or a sector too short.
+    #[must_use]
+    pub fn led_color(&self) -> Option<[u8; 3]> {
+        let at = self.0.get(LED_AT..LED_AT + 4)?;
+        (at[0] == LED_FIXED).then(|| [at[1], at[2], at[3]])
+    }
+
+    /// A copy whose fixed LED colour is `color`; everything else is unchanged
+    /// and the checksum is recomputed. Refused unless the profile already
+    /// holds one fixed colour, so no other effect is flattened.
+    pub fn with_led_color(&self, color: [u8; 3]) -> Result<Self, ProfileError> {
+        if self.0.len() < LED_AT + 4 + CHECKSUM_LEN {
+            return Err(ProfileError::NoLedSetting);
+        }
+        let mode = self.0[LED_AT];
+        if mode != LED_FIXED {
+            return Err(ProfileError::LedNotFixed(mode));
+        }
+        let mut bytes = self.0.clone();
+        bytes[LED_AT + 1..LED_AT + 4].copy_from_slice(&color);
+        let end = bytes.len() - CHECKSUM_LEN;
+        let crc = crc16_ccitt(&bytes[..end]);
+        bytes[end..].copy_from_slice(&crc.to_be_bytes());
+        Ok(Self(bytes))
+    }
+
+    /// The stored LED brightness in percent, for a profile with one fixed
+    /// colour. Zero is what an untouched profile holds.
+    #[must_use]
+    pub fn led_brightness(&self) -> Option<u8> {
+        self.led_color()?;
+        self.0.get(LED_BRIGHTNESS_AT).copied()
+    }
+
+    /// A copy whose LED brightness is `percent`; same guards as
+    /// [`Self::with_led_color`].
+    pub fn with_led_brightness(&self, percent: u8) -> Result<Self, ProfileError> {
+        if percent > 100 {
+            return Err(ProfileError::BadBrightness(percent));
+        }
+        let mut bytes = self.with_led_color(self.led_color().unwrap_or_default())?.0;
+        bytes[LED_BRIGHTNESS_AT] = percent;
         let end = bytes.len() - CHECKSUM_LEN;
         let crc = crc16_ccitt(&bytes[..end]);
         bytes[end..].copy_from_slice(&crc.to_be_bytes());
@@ -372,6 +436,96 @@ mod tests {
                 "byte {i} changed from {a:#04x} to {b:#04x}"
             );
         }
+    }
+
+    // -- the LED colour ----------------------------------------------------
+
+    #[test]
+    fn the_real_profile_holds_the_fixed_colour_the_mouse_shows() {
+        let profile = ProfileSector::parse(&real_profile(), SECTOR_SIZE).unwrap();
+        assert_eq!(profile.led_color(), Some([0x94, 0xe6, 0xff]));
+    }
+
+    #[test]
+    fn setting_the_colour_changes_only_its_three_bytes_and_the_checksum() {
+        let before = real_profile();
+        let profile = ProfileSector::parse(&before, SECTOR_SIZE).unwrap();
+        let after = profile.with_led_color([0x12, 0x34, 0x56]).unwrap();
+        assert_eq!(after.led_color(), Some([0x12, 0x34, 0x56]));
+        for (i, (a, b)) in before.iter().zip(after.as_bytes()).enumerate() {
+            let allowed = (0xd1..0xd4).contains(&i) || i >= SECTOR_SIZE - 2;
+            assert!(
+                a == b || allowed,
+                "byte {i} changed from {a:#04x} to {b:#04x}"
+            );
+        }
+        ProfileSector::parse(after.as_bytes(), SECTOR_SIZE).unwrap();
+    }
+
+    #[test]
+    fn setting_the_colour_it_already_has_reproduces_the_profile() {
+        let profile = ProfileSector::parse(&real_profile(), SECTOR_SIZE).unwrap();
+        let again = profile.with_led_color([0x94, 0xe6, 0xff]).unwrap();
+        assert_eq!(again, profile);
+    }
+
+    #[test]
+    fn a_profile_with_another_led_mode_is_not_touched() {
+        let mut bytes = real_profile();
+        bytes[0xd0] = 3;
+        seal(&mut bytes);
+        let profile = ProfileSector::parse(&bytes, SECTOR_SIZE).unwrap();
+        assert_eq!(profile.led_color(), None);
+        assert_eq!(
+            profile.with_led_color([1, 2, 3]),
+            Err(ProfileError::LedNotFixed(3))
+        );
+    }
+
+    #[test]
+    fn setting_the_brightness_changes_only_its_byte_and_the_checksum() {
+        let before = real_profile();
+        let profile = ProfileSector::parse(&before, SECTOR_SIZE).unwrap();
+        assert_eq!(profile.led_brightness(), Some(0));
+        let after = profile.with_led_brightness(40).unwrap();
+        assert_eq!(after.led_brightness(), Some(40));
+        assert_eq!(after.led_color(), profile.led_color());
+        for (i, (a, b)) in before.iter().zip(after.as_bytes()).enumerate() {
+            let allowed = i == 0xd8 || i >= SECTOR_SIZE - 2;
+            assert!(
+                a == b || allowed,
+                "byte {i} changed from {a:#04x} to {b:#04x}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_brightness_above_a_hundred_percent_is_refused() {
+        let profile = ProfileSector::parse(&real_profile(), SECTOR_SIZE).unwrap();
+        assert_eq!(
+            profile.with_led_brightness(101),
+            Err(ProfileError::BadBrightness(101))
+        );
+    }
+
+    #[test]
+    fn the_brightness_of_another_led_mode_is_not_touched() {
+        let mut bytes = real_profile();
+        bytes[0xd0] = 3;
+        seal(&mut bytes);
+        let profile = ProfileSector::parse(&bytes, SECTOR_SIZE).unwrap();
+        assert_eq!(profile.led_brightness(), None);
+        assert_eq!(
+            profile.with_led_brightness(50),
+            Err(ProfileError::LedNotFixed(3))
+        );
+    }
+
+    #[test]
+    fn dpi_edits_leave_the_colour_alone() {
+        let profile = ProfileSector::parse(&real_profile(), SECTOR_SIZE).unwrap();
+        let edited = profile.with_dpi_stages(&[800, 3200], 0).unwrap();
+        assert_eq!(edited.led_color(), profile.led_color());
     }
 
     // -- the checksum ------------------------------------------------------

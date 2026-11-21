@@ -301,7 +301,7 @@ impl AppState {
 
     /// The profile whose stages the selected mouse runs: the active one, when
     /// a profile (not OpenLogi) owns the mouse.
-    fn current_stored_profile(&self) -> Option<openlogi_core::hid::ProfileIndex> {
+    pub(super) fn current_stored_profile(&self) -> Option<openlogi_core::hid::ProfileIndex> {
         match self.current_onboard_active()? {
             OnboardMemory::Profile(index) if self.current_onboard_supported() => Some(index),
             _ => None,

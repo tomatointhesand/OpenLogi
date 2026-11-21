@@ -416,6 +416,9 @@ impl AppView {
             StateEvent::OnboardChanged(key) | StateEvent::ProfileDpiChanged(key) => {
                 !on_home && self.active_tab == DetailTab::Pointer && is_current(key)
             }
+            StateEvent::ProfileLedChanged(key) => {
+                !on_home && self.active_tab == DetailTab::Lighting && is_current(key)
+            }
             StateEvent::CameraChanged => on_home || self.active_tab == DetailTab::Light,
             // The Home header's Flow button shows Flow's status.
             StateEvent::FlowChanged => on_home,

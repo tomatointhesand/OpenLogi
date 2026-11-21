@@ -38,7 +38,7 @@ pub use force_sensing::ForceSensingInfo;
 pub use light::{LightCommand, commands_for_light_settings};
 pub use onboard::{
     OnboardMode, OnboardProfile, OnboardState, ProfileDpi, ProfileDpiError, ProfileDpiSaved,
-    ProfileIndex,
+    ProfileIndex, ProfileLed, ProfileLedSaved,
 };
 pub use pairing::{Click, PairingError, PasskeyMethod, ReceiverSelector};
 pub use pointer_speed::PointerSpeed;

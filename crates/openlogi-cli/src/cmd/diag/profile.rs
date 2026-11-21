@@ -67,6 +67,23 @@ pub fn render_plan(before: &ProfileSector, after: &ProfileSector) -> String {
         before.default_stage(),
         after.default_stage()
     );
+    let brightness = |p: &ProfileSector| {
+        p.led_brightness()
+            .map_or_else(|| "n/a".to_owned(), |b| format!("{b}%"))
+    };
+    let _ = writeln!(
+        plan,
+        "LED brightness: {} -> {}",
+        brightness(before),
+        brightness(after)
+    );
+    let color = |p: &ProfileSector| {
+        p.led_color().map_or_else(
+            || "not one fixed colour".to_owned(),
+            |[r, g, b]| format!("#{r:02x}{g:02x}{b:02x}"),
+        )
+    };
+    let _ = writeln!(plan, "LED colour:    {} -> {}", color(before), color(after));
     let total = after.as_bytes().len();
     if changed == 0 {
         let _ = write!(plan, "0 of {total} bytes change: nothing to write");
@@ -98,11 +115,17 @@ pub struct ProfileWriteArgs {
     #[arg(long, default_value_t = 1)]
     pub profile: u8,
     /// One to five DPI stages, comma-separated, e.g. 800,3200 or 400,800,1600,3200,6400.
-    #[arg(long, value_name = "LIST")]
-    pub dpi: String,
+    #[arg(long, value_name = "LIST", requires = "default_stage")]
+    pub dpi: Option<String>,
     /// The stage the mouse starts on, 0-based.
-    #[arg(long = "default-stage", value_name = "N")]
-    pub default_stage: u8,
+    #[arg(long = "default-stage", value_name = "N", requires = "dpi")]
+    pub default_stage: Option<u8>,
+    /// The fixed LED colour the profile shows when no program controls the mouse, as `RRGGBB`.
+    #[arg(long = "led-color", value_name = "RRGGBB")]
+    pub led_color: Option<String>,
+    /// The stored LED brightness in percent, 0 to 100 (an experiment: which byte holds it is not confirmed).
+    #[arg(long = "led-brightness", value_name = "PERCENT")]
+    pub led_brightness: Option<u8>,
     /// Where the backup of the current profile is saved first.
     #[arg(long, value_name = "DIR")]
     pub backup_dir: Option<PathBuf>,
@@ -184,7 +207,22 @@ pub async fn run_dump(args: ProfileDumpArgs) -> Result<()> {
 
 pub async fn run_write(args: ProfileWriteArgs) -> Result<()> {
     let index = profile_index(args.profile)?;
-    let stages = parse_dpi_list(&args.dpi).map_err(|e| anyhow!(e))?;
+    let stages = args
+        .dpi
+        .as_deref()
+        .map(parse_dpi_list)
+        .transpose()
+        .map_err(|e| anyhow!(e))?;
+    let led: Option<openlogi_core::color::Rgb> = args
+        .led_color
+        .as_deref()
+        .map(|text| text.trim_start_matches('#').parse())
+        .transpose()?;
+    if stages.is_none() && led.is_none() && args.led_brightness.is_none() {
+        bail!(
+            "nothing to change: give --dpi with --default-stage, and/or --led-color, --led-brightness"
+        );
+    }
     let (route, name) = select_device(args.device.as_deref(), &[0x8100]).await?;
     println!("device: {name} ({route})");
 
@@ -199,7 +237,17 @@ pub async fn run_write(args: ProfileWriteArgs) -> Result<()> {
                 args.profile
             )
         })?;
-    let new = current.with_dpi_stages(&stages, args.default_stage)?;
+    let mut new = current.clone();
+    if let (Some(stages), Some(default)) = (&stages, args.default_stage) {
+        new = new.with_dpi_stages(stages, default)?;
+    }
+    if let Some(color) = led {
+        let (r, g, b) = color.components();
+        new = new.with_led_color([r, g, b])?;
+    }
+    if let Some(percent) = args.led_brightness {
+        new = new.with_led_brightness(percent)?;
+    }
     println!("profile {} (sector {:#06x}):", args.profile, dump.sector);
     println!("{}", render_plan(&current, &new));
     if current == new {

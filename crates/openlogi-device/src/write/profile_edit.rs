@@ -17,7 +17,8 @@ use hidpp::{
     },
 };
 use openlogi_core::hid::{
-    Dpi, OnboardMode, ProfileDpi, ProfileDpiError, ProfileDpiSaved, ProfileIndex,
+    Dpi, OnboardMode, ProfileDpi, ProfileDpiError, ProfileDpiSaved, ProfileIndex, ProfileLed,
+    ProfileLedSaved,
 };
 
 pub use hidpp::feature::onboard_profiles::profile::{
@@ -125,6 +126,30 @@ fn dpi_of(profile: ProfileIndex, sector: &ProfileSector) -> ProfileDpi {
     }
 }
 
+/// The LED setting stored in a profile sector read from the mouse.
+pub fn profile_led(
+    profile: ProfileIndex,
+    bytes: &[u8],
+    sector_size: usize,
+) -> Result<ProfileLed, ProfileDpiError> {
+    let sector = ProfileSector::parse(bytes, sector_size)
+        .map_err(|error| ProfileDpiError::Unsupported(error.to_string()))?;
+    led_of(profile, &sector)
+}
+
+fn led_of(profile: ProfileIndex, sector: &ProfileSector) -> Result<ProfileLed, ProfileDpiError> {
+    match (sector.led_color(), sector.led_brightness()) {
+        (Some(color), Some(brightness)) => Ok(ProfileLed {
+            profile,
+            color,
+            brightness,
+        }),
+        _ => Err(ProfileDpiError::Unsupported(
+            "this profile's LED is not one fixed colour".to_owned(),
+        )),
+    }
+}
+
 /// Where and how a profile's DPI stages are saved.
 pub struct SaveTarget<'a> {
     /// The profile being saved.
@@ -158,6 +183,48 @@ pub async fn save_dpi_with(
     stages: &[Dpi],
     default: u8,
 ) -> Result<ProfileDpiSaved, ProfileDpiError> {
+    let raw: Vec<u16> = stages.iter().map(|stage| stage.into_inner()).collect();
+    let (after, backup) = save_edit_with(memory, target, |parsed| {
+        parsed.with_dpi_stages(&raw, default)
+    })
+    .await?;
+    Ok(ProfileDpiSaved {
+        saved: dpi_of(target.profile, &after),
+        backup,
+    })
+}
+
+/// Save a fixed LED `color` and `brightness` (percent) into the profile
+/// `target` names, through the same guards as [`save_dpi_with`]. A profile
+/// whose LED is not one fixed colour is left alone.
+pub async fn save_led_with(
+    memory: &dyn ProfileMemory,
+    target: &SaveTarget<'_>,
+    color: [u8; 3],
+    brightness: u8,
+) -> Result<ProfileLedSaved, ProfileDpiError> {
+    let (after, backup) = save_edit_with(memory, target, |parsed| {
+        parsed
+            .with_led_color(color)?
+            .with_led_brightness(brightness)
+    })
+    .await?;
+    Ok(ProfileLedSaved {
+        saved: led_of(target.profile, &after)?,
+        backup,
+    })
+}
+
+/// The shared guarded save: refuse host mode, read and parse the sector, work
+/// out the new bytes with `edit`, and (unless they equal the old) save a
+/// verified backup, write, read back and restore on a mismatch. Returns the
+/// profile as the mouse holds it afterwards and the backup file's path (empty
+/// when nothing was written).
+async fn save_edit_with(
+    memory: &dyn ProfileMemory,
+    target: &SaveTarget<'_>,
+    edit: impl FnOnce(&ProfileSector) -> Result<ProfileSector, ProfileError>,
+) -> Result<(ProfileSector, String), ProfileDpiError> {
     if target.mode == OnboardMode::Host {
         return Err(ProfileDpiError::HostMode);
     }
@@ -166,15 +233,9 @@ pub async fn save_dpi_with(
         .map_err(|error| ProfileDpiError::Device(memory_failure(&error)))?;
     let parsed = ProfileSector::parse(&current, target.sector_size)
         .map_err(|error| ProfileDpiError::Unsupported(error.to_string()))?;
-    let raw: Vec<u16> = stages.iter().map(|stage| stage.into_inner()).collect();
-    let new = parsed
-        .with_dpi_stages(&raw, default)
-        .map_err(edit_refusal)?;
+    let new = edit(&parsed).map_err(edit_refusal)?;
     if new == parsed {
-        return Ok(ProfileDpiSaved {
-            saved: dpi_of(target.profile, &parsed),
-            backup: String::new(),
-        });
+        return Ok((parsed, String::new()));
     }
 
     let backup = SectorBackup {
@@ -228,15 +289,16 @@ pub async fn save_dpi_with(
             restored: false,
             backup: path.clone(),
         })?;
-    Ok(ProfileDpiSaved {
-        saved: profile_dpi(target.profile, &after, target.sector_size)?,
-        backup: path,
-    })
+    let after = ProfileSector::parse(&after, target.sector_size)
+        .map_err(|error| ProfileDpiError::Unsupported(error.to_string()))?;
+    Ok((after, path))
 }
 
 fn edit_refusal(error: ProfileError) -> ProfileDpiError {
     match error {
-        ProfileError::SplitAxes(_) => ProfileDpiError::Unsupported(error.to_string()),
+        ProfileError::SplitAxes(_) | ProfileError::LedNotFixed(_) | ProfileError::NoLedSetting => {
+            ProfileDpiError::Unsupported(error.to_string())
+        }
         other => ProfileDpiError::Invalid(other.to_string()),
     }
 }
@@ -289,6 +351,52 @@ pub async fn save_profile_dpi_on(
         now_secs,
     };
     save_dpi_with(&*onboard, &target, stages, default).await
+}
+
+/// Read the stored LED setting of profile `profile` on an open channel.
+/// Read-only.
+pub async fn read_profile_led_on(
+    shared: &crate::SharedChannel,
+    profile: ProfileIndex,
+) -> Result<ProfileLed, ProfileDpiError> {
+    let (onboard, sector_size, entries) = open(shared.channel(), shared.device_index())
+        .await
+        .map_err(ProfileDpiError::Device)?;
+    let sector = sector_of(&entries, profile)?;
+    let bytes = profile_io::read_sector(&*onboard, sector, sector_size)
+        .await
+        .map_err(|error| ProfileDpiError::Device(memory_failure(&error)))?;
+    profile_led(profile, &bytes, sector_size)
+}
+
+/// Save a fixed LED `color` and `brightness` into profile `profile` on an open
+/// channel, through [`save_led_with`]'s guards.
+pub async fn save_profile_led_on(
+    shared: &crate::SharedChannel,
+    profile: ProfileIndex,
+    color: [u8; 3],
+    brightness: u8,
+    backup_dir: &Path,
+    device_name: &str,
+    now_secs: u64,
+) -> Result<ProfileLedSaved, ProfileDpiError> {
+    let (onboard, sector_size, entries) = open(shared.channel(), shared.device_index())
+        .await
+        .map_err(ProfileDpiError::Device)?;
+    let mode = mode_of(&onboard).await.map_err(ProfileDpiError::Device)?;
+    let sector = sector_of(&entries, profile)?;
+    let listed = listed_profile_sectors(&entries);
+    let target = SaveTarget {
+        profile,
+        sector,
+        sector_size,
+        listed: &listed,
+        mode,
+        backup_dir,
+        device_name,
+        now_secs,
+    };
+    save_led_with(&*onboard, &target, color, brightness).await
 }
 
 fn sector_of(entries: &[ProfileEntry], profile: ProfileIndex) -> Result<u16, ProfileDpiError> {
@@ -514,7 +622,7 @@ mod tests {
     use async_trait::async_trait;
     use hidpp::feature::onboard_profiles::profile::crc16_ccitt;
     use hidpp::feature::onboard_profiles::profile_io::{CHUNK, MemoryError, ProfileMemory};
-    use openlogi_core::hid::{Dpi, ProfileDpiError};
+    use openlogi_core::hid::{Dpi, ProfileDpiError, ProfileLed};
 
     const SIZE: usize = 255;
 
@@ -805,5 +913,106 @@ mod tests {
             profile_dpi(index(1), &[0xff; SIZE], SIZE),
             Err(ProfileDpiError::Unsupported(_))
         ));
+    }
+
+    // -- the stored LED ---------------------------------------------------
+
+    /// `sector_bytes` with the LED set to one fixed colour at `brightness`.
+    fn lit_sector(color: [u8; 3], brightness: u8) -> Vec<u8> {
+        let mut bytes = sector_bytes([800, 3200, 0, 0, 0], 0);
+        bytes[0xd0] = 1;
+        bytes[0xd1..0xd4].copy_from_slice(&color);
+        bytes[0xd8] = brightness;
+        let end = SIZE - 2;
+        let crc = crc16_ccitt(&bytes[..end]);
+        bytes[end..].copy_from_slice(&crc.to_be_bytes());
+        bytes
+    }
+
+    #[test]
+    fn a_stored_led_is_read_back_as_colour_and_brightness() {
+        assert_eq!(
+            profile_led(index(1), &lit_sector([1, 2, 3], 40), SIZE),
+            Ok(ProfileLed {
+                profile: index(1),
+                color: [1, 2, 3],
+                brightness: 40
+            })
+        );
+    }
+
+    #[test]
+    fn a_profile_whose_led_is_not_one_fixed_colour_cannot_be_read_as_one() {
+        assert!(matches!(
+            profile_led(index(1), &sector_bytes([800, 0, 0, 0, 0], 0), SIZE),
+            Err(ProfileDpiError::Unsupported(_))
+        ));
+    }
+
+    #[test]
+    fn a_new_led_is_written_read_back_and_backed_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = lit_sector([0x94, 0xe6, 0xff], 0);
+        let mouse = Mouse::new(original.clone());
+        let saved = block_on(save_led_with(
+            &mouse,
+            &save_args(dir.path()),
+            [0, 255, 0],
+            30,
+        ))
+        .unwrap();
+        assert_eq!(saved.saved.color, [0, 255, 0]);
+        assert_eq!(saved.saved.brightness, 30);
+        let now = ProfileSector::parse(&mouse.bytes(), SIZE).unwrap();
+        assert_eq!(now.led_color(), Some([0, 255, 0]));
+        // the DPI stages are untouched
+        assert_eq!(now.dpi_stages(), [800, 3200, 0, 0, 0]);
+        let backup =
+            super::super::profile_backup::load_backup(std::path::Path::new(&saved.backup)).unwrap();
+        assert_eq!(backup.bytes, original);
+    }
+
+    #[test]
+    fn an_unchanged_led_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mouse = Mouse::new(lit_sector([5, 6, 7], 20));
+        let saved = block_on(save_led_with(&mouse, &save_args(dir.path()), [5, 6, 7], 20)).unwrap();
+        assert_eq!(saved.backup, "");
+        assert_eq!(mouse.write_count(), 0);
+    }
+
+    #[test]
+    fn the_led_is_not_saved_in_host_mode_or_over_another_effect() {
+        let dir = tempfile::tempdir().unwrap();
+        let mouse = Mouse::new(lit_sector([5, 6, 7], 20));
+        let mut target = save_args(dir.path());
+        target.mode = OnboardMode::Host;
+        assert_eq!(
+            block_on(save_led_with(&mouse, &target, [1, 1, 1], 5)).unwrap_err(),
+            ProfileDpiError::HostMode
+        );
+        let other = Mouse::new(sector_bytes([800, 3200, 0, 0, 0], 0));
+        let error =
+            block_on(save_led_with(&other, &save_args(dir.path()), [1, 1, 1], 5)).unwrap_err();
+        assert!(
+            matches!(error, ProfileDpiError::Unsupported(_)),
+            "{error:?}"
+        );
+        assert_eq!(mouse.write_count() + other.write_count(), 0);
+    }
+
+    #[test]
+    fn a_brightness_above_a_hundred_is_refused_before_any_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let mouse = Mouse::new(lit_sector([5, 6, 7], 20));
+        let error = block_on(save_led_with(
+            &mouse,
+            &save_args(dir.path()),
+            [5, 6, 7],
+            101,
+        ))
+        .unwrap_err();
+        assert!(matches!(error, ProfileDpiError::Invalid(_)), "{error:?}");
+        assert_eq!(mouse.write_count(), 0);
     }
 }

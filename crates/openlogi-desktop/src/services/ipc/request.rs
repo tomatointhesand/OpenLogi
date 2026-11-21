@@ -20,8 +20,8 @@ use openlogi_core::config::{ConfigRevision, Lighting};
 use openlogi_core::hid::{
     BacklightChange, BacklightState, DeviceRoute, DisableKeysMask, DisableKeysState, Dpi, DpiInfo,
     EasySwitchHosts, FnLockState, ForceSensingInfo, LightCommand, OnboardState, PointerSpeed,
-    ProfileDpi, ProfileDpiError, ProfileDpiSaved, ProfileIndex, ReceiverSelector, ReportRate,
-    ReportRateInfo, SidetoneLevel, SmartShiftStatus, WriteError,
+    ProfileDpi, ProfileDpiError, ProfileDpiSaved, ProfileIndex, ProfileLed, ProfileLedSaved,
+    ReceiverSelector, ReportRate, ReportRateInfo, SidetoneLevel, SmartShiftStatus, WriteError,
 };
 use openlogi_ipc::{
     AgentClient, ChosenLight, ConfigReloadError, FlowPairTarget, FlowPairingCommandError,
@@ -753,6 +753,67 @@ impl Request for WriteProfileDpi {
     }
 }
 
+/// Read the fixed LED setting stored in a mouse's onboard profile, answered as
+/// [`GuiUpdate::ProfileLedRead`].
+pub struct ReadProfileLed {
+    pub key: DeviceKey,
+    pub route: DeviceRoute,
+    pub profile: ProfileIndex,
+}
+
+impl Request for ReadProfileLed {
+    type Answer = Result<ProfileLed, ProfileDpiError>;
+
+    async fn call(&self, client: &AgentClient) -> Result<Self::Answer, RpcError> {
+        client
+            .read_profile_led(context::current(), self.route.clone(), self.profile)
+            .await
+    }
+
+    fn deliver(self, outcome: Result<Self::Answer, Unavailable>, updates: &UpdateSender) {
+        let _ = updates.send(GuiUpdate::ProfileLedRead {
+            key: self.key,
+            profile: self.profile,
+            result: profile_dpi_or_unavailable(outcome),
+        });
+    }
+}
+
+/// Save a fixed LED colour and brightness into a mouse's onboard profile,
+/// answered as [`GuiUpdate::ProfileLedSaved`]. This rewrites the mouse's
+/// flash: only the "Save to mouse" button sends it.
+pub struct WriteProfileLed {
+    pub key: DeviceKey,
+    pub route: DeviceRoute,
+    pub profile: ProfileIndex,
+    pub color: [u8; 3],
+    pub brightness: u8,
+}
+
+impl Request for WriteProfileLed {
+    type Answer = Result<ProfileLedSaved, ProfileDpiError>;
+
+    async fn call(&self, client: &AgentClient) -> Result<Self::Answer, RpcError> {
+        client
+            .write_profile_led(
+                context::current(),
+                self.route.clone(),
+                self.profile,
+                self.color,
+                self.brightness,
+            )
+            .await
+    }
+
+    fn deliver(self, outcome: Result<Self::Answer, Unavailable>, updates: &UpdateSender) {
+        let _ = updates.send(GuiUpdate::ProfileLedSaved {
+            key: self.key,
+            profile: self.profile,
+            result: profile_dpi_or_unavailable(outcome),
+        });
+    }
+}
+
 /// Unwrap a profile-DPI answer, standing in for it when the agent could not
 /// be reached.
 fn profile_dpi_or_unavailable<T>(
@@ -1238,6 +1299,8 @@ commands! {
     ReadOnboard,
     ReadProfileDpi,
     WriteProfileDpi,
+    ReadProfileLed,
+    WriteProfileLed,
     ReloadConfig,
     RequestAccessibilityPrompt,
     RetryConnection,

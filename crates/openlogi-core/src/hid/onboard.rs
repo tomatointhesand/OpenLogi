@@ -96,7 +96,29 @@ pub struct ProfileDpiSaved {
     pub backup: String,
 }
 
-/// Why a profile's DPI stages could not be read or saved.
+/// The fixed LED setting one onboard profile stores: what the mouse shows
+/// when no program controls it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileLed {
+    /// The profile.
+    pub profile: ProfileIndex,
+    /// The colour as red, green, blue.
+    pub color: [u8; 3],
+    /// The brightness in percent, 0 to 100.
+    pub brightness: u8,
+}
+
+/// A profile's LED setting after a save.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileLedSaved {
+    /// What the mouse holds now, read back.
+    pub saved: ProfileLed,
+    /// The file the profile as it was before was saved to; empty when nothing
+    /// needed writing.
+    pub backup: String,
+}
+
+/// Why a profile's DPI stages or LED setting could not be read or saved.
 ///
 /// Append new variants only: the enum crosses the bincode IPC.
 #[derive(Debug, Clone, PartialEq, Eq, Error, Serialize, Deserialize)]

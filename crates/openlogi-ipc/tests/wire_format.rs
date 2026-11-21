@@ -51,9 +51,9 @@ use openlogi_core::hid::{
     DpiInfo, EasySwitchHosts, EasySwitchSlot, FnLockState, ForceSensingInfo, HidppFeatureErrorKind,
     HidppOperation, HostConnection, HostOsInfo, HostOsKind, LightCommand, OnboardMode,
     OnboardProfile, OnboardState, PasskeyMethod, ProfileDpi, ProfileDpiError, ProfileDpiSaved,
-    ProfileIndex, ReceiverSelector, ReportRate, ReportRateInfo, ScrollReportingTarget,
-    ScrollWheelMode, SidetoneLevel, SmartShiftAutoDisengage, SmartShiftMode, SmartShiftStatus,
-    SmartShiftThreshold, TunableTorque, WriteError,
+    ProfileIndex, ProfileLed, ProfileLedSaved, ReceiverSelector, ReportRate, ReportRateInfo,
+    ScrollReportingTarget, ScrollWheelMode, SidetoneLevel, SmartShiftAutoDisengage, SmartShiftMode,
+    SmartShiftStatus, SmartShiftThreshold, TunableTorque, WriteError,
 };
 use openlogi_ipc::{
     ActionRingCommandError, ActionRingInvocation, ActionRingPresentation, AgentRequest,
@@ -120,7 +120,7 @@ fn representative_smartshift_status() -> SmartShiftStatus {
 /// unreleased version and leave this pin alone (`crates/openlogi-ipc/AGENTS.md`).
 #[test]
 fn protocol_version_is_pinned() {
-    assert_eq!(PROTOCOL_VERSION, 47);
+    assert_eq!(PROTOCOL_VERSION, 48);
 }
 
 #[test]
@@ -1068,6 +1068,43 @@ fn profile_dpi() {
             backup: "b".into(),
         },
         "070172010162",
+    );
+}
+
+#[test]
+fn profile_led() {
+    let route = DeviceRoute::Bolt {
+        receiver_uid: "F00DCAFE".into(),
+        slot: 1,
+    };
+    assert_wire(
+        &AgentRequest::ReadProfileLed {
+            route: route.clone(),
+            profile: ProfileIndex::new(1).unwrap(),
+        },
+        "3c000846303044434146450101",
+    );
+    assert_wire(
+        &AgentRequest::WriteProfileLed {
+            route,
+            profile: ProfileIndex::new(1).unwrap(),
+            color: [1, 2, 3],
+            brightness: 30,
+        },
+        "3d0008463030444341464501010102031e",
+    );
+    let stored = ProfileLed {
+        profile: ProfileIndex::new(1).unwrap(),
+        color: [1, 2, 3],
+        brightness: 30,
+    };
+    assert_wire(&stored, "010102031e");
+    assert_wire(
+        &ProfileLedSaved {
+            saved: stored,
+            backup: "b".into(),
+        },
+        "010102031e0162",
     );
 }
 

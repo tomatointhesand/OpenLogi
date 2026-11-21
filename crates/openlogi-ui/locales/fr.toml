@@ -752,6 +752,8 @@ applying_light_setting = "Application du réglage d’éclairage…"
 auto_on_with_camera = "Allumage automatique avec la caméra"
 camera_light_auto_description = "Allume l’éclairage lorsqu’une caméra est utilisée et l’éteint lorsqu’aucune ne l’est."
 keyboard_lighting_description = "Appliqué par OpenLogi tant qu’il est ouvert, sans être enregistré sur le clavier."
+profile_led_stored = "La souris garde %{color} à %{brightness} % de luminosité quand OpenLogi ne tourne pas."
+profile_led_unsaved = "Cette couleur et cette luminosité ne sont pas encore enregistrées sur la souris."
 
 [action_ring]
 actions_ring = "Anneau d’actions"
