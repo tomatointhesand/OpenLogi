@@ -29,6 +29,8 @@ pub(super) struct PointerState {
     /// save it.
     pub(super) pending_force_sensing_writes: HashMap<DeviceKey, u64>,
     pub(super) next_force_sensing_write: u64,
+    /// Each mouse's stored-profile DPI stages: what it holds and the draft.
+    pub(super) profile_panels: HashMap<DeviceKey, super::profile_dpi::ProfilePanel>,
 }
 
 impl Default for PointerState {
@@ -43,6 +45,7 @@ impl Default for PointerState {
             refused_force_sensing: HashSet::new(),
             pending_force_sensing_writes: HashMap::new(),
             next_force_sensing_write: 0,
+            profile_panels: HashMap::new(),
         }
     }
 }

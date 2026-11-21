@@ -82,6 +82,8 @@ impl DpiPanel {
                 StateEvent::DpiChanged(_)
                     | StateEvent::ReportRateChanged(_)
                     | StateEvent::PointerSpeedChanged(_)
+                    | StateEvent::ProfileDpiChanged(_)
+                    | StateEvent::OnboardChanged(_)
             )
         });
 
@@ -185,7 +187,7 @@ impl DpiPanel {
         // what it holds instead of controls that would fail.
         if snapshot.locked {
             self.slider = None;
-            return locked_dpi_section(pal);
+            return super::profile_dpi::profile_section(pal, cx);
         }
 
         if let (DpiLoad::Ready(info), Some(key)) = (&snapshot.status, &snapshot.device_key) {
@@ -324,7 +326,7 @@ impl DpiPanel {
 /// The DPI a typed `text` asks for: a whole number inside the device's range,
 /// snapped to the nearest value it supports. `None` for anything else, so the
 /// dialog stays open instead of quietly choosing a value the user did not type.
-fn parse_dpi_entry(text: &str, capabilities: &DpiCapabilities) -> Option<Dpi> {
+pub(super) fn parse_dpi_entry(text: &str, capabilities: &DpiCapabilities) -> Option<Dpi> {
     let typed = text.trim().parse::<u16>().ok().map(Dpi::new)?;
     (capabilities.min() <= typed && typed <= capabilities.max())
         .then(|| capabilities.nearest(typed))
@@ -432,27 +434,6 @@ fn slider_element(
             status_line(tr!("pointer.adjustable_dpi_unsupported"), pal).into_any_element()
         }
     }
-}
-
-/// The DPI row while a stored profile owns it. The app's own DPI is not what
-/// the mouse is using then, so no value is shown, only who sets it.
-fn locked_dpi_section(pal: Palette) -> AnyElement {
-    v_flex()
-        .gap_1()
-        .w_full()
-        .child(
-            div()
-                .text_body()
-                .text_color(pal.text_primary)
-                .child(tr!("pointer.dpi")),
-        )
-        .child(
-            div()
-                .text_caption()
-                .text_color(pal.text_muted)
-                .child(tr!("pointer.report_rate_onboard")),
-        )
-        .into_any_element()
 }
 
 const CHIP_H: f32 = 28.;

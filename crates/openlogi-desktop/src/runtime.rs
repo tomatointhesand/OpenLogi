@@ -411,6 +411,28 @@ impl Runtime {
                     });
                 });
             }
+            ipc::GuiUpdate::ProfileDpiRead {
+                key,
+                profile,
+                result,
+            } => {
+                cx.update(|cx| {
+                    AppState::apply(cx, |state| {
+                        state.apply_profile_dpi_read(&key, profile, result)
+                    });
+                });
+            }
+            ipc::GuiUpdate::ProfileDpiSaved {
+                key,
+                profile,
+                result,
+            } => {
+                cx.update(|cx| {
+                    AppState::apply(cx, |state| {
+                        state.apply_profile_dpi_saved(&key, profile, result)
+                    });
+                });
+            }
             ipc::GuiUpdate::DeviceUnpaired {
                 route,
                 intent,

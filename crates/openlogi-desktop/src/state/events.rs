@@ -69,6 +69,8 @@ pub(crate) enum StateEvent {
     DisableKeysChanged(DeviceKey),
     /// The onboard-memory read changed.
     OnboardChanged(DeviceKey),
+    /// The DPI stages stored in the mouse's profile were read, edited or saved.
+    ProfileDpiChanged(DeviceKey),
     /// Device or standalone-light settings changed.
     LightingChanged(DeviceKey),
     /// Camera settings or activity changed.
@@ -111,6 +113,7 @@ impl StateEvent {
             | Self::EasySwitchChanged(key)
             | Self::DisableKeysChanged(key)
             | Self::OnboardChanged(key)
+            | Self::ProfileDpiChanged(key)
             | Self::LightingChanged(key)
             | Self::DeviceConfigChanged(key) => Some(key),
             Self::AgentChanged
@@ -272,6 +275,7 @@ impl AppState {
             | StateEvent::EasySwitchChanged(_)
             | StateEvent::DisableKeysChanged(_)
             | StateEvent::OnboardChanged(_)
+            | StateEvent::ProfileDpiChanged(_)
             | StateEvent::LightingChanged(_)
             | StateEvent::CameraChanged
             | StateEvent::CameraPermissionChanged

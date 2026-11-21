@@ -20,7 +20,8 @@ use openlogi_core::config::{ConfigRevision, Lighting};
 use openlogi_core::hid::{
     BacklightChange, BacklightState, DeviceRoute, DisableKeysMask, DisableKeysState, Dpi, DpiInfo,
     EasySwitchHosts, FnLockState, ForceSensingInfo, LightCommand, OnboardState, PointerSpeed,
-    ReceiverSelector, ReportRate, ReportRateInfo, SidetoneLevel, SmartShiftStatus, WriteError,
+    ProfileDpi, ProfileDpiError, ProfileDpiSaved, ProfileIndex, ReceiverSelector, ReportRate,
+    ReportRateInfo, SidetoneLevel, SmartShiftStatus, WriteError,
 };
 use openlogi_ipc::{
     AgentClient, ChosenLight, ConfigReloadError, FlowPairTarget, FlowPairingCommandError,
@@ -691,6 +692,75 @@ impl Request for ReadOnboard {
     }
 }
 
+/// Read the DPI stages stored in a mouse's onboard profile, answered as
+/// [`GuiUpdate::ProfileDpiRead`].
+pub struct ReadProfileDpi {
+    pub key: DeviceKey,
+    pub route: DeviceRoute,
+    pub profile: ProfileIndex,
+}
+
+impl Request for ReadProfileDpi {
+    type Answer = Result<ProfileDpi, ProfileDpiError>;
+
+    async fn call(&self, client: &AgentClient) -> Result<Self::Answer, RpcError> {
+        client
+            .read_profile_dpi(context::current(), self.route.clone(), self.profile)
+            .await
+    }
+
+    fn deliver(self, outcome: Result<Self::Answer, Unavailable>, updates: &UpdateSender) {
+        let _ = updates.send(GuiUpdate::ProfileDpiRead {
+            key: self.key,
+            profile: self.profile,
+            result: profile_dpi_or_unavailable(outcome),
+        });
+    }
+}
+
+/// Save DPI stages into a mouse's onboard profile, answered as
+/// [`GuiUpdate::ProfileDpiSaved`]. This rewrites the mouse's flash: only the
+/// "Save to mouse" button sends it.
+pub struct WriteProfileDpi {
+    pub key: DeviceKey,
+    pub route: DeviceRoute,
+    pub profile: ProfileIndex,
+    pub stages: Vec<Dpi>,
+    pub default_stage: u8,
+}
+
+impl Request for WriteProfileDpi {
+    type Answer = Result<ProfileDpiSaved, ProfileDpiError>;
+
+    async fn call(&self, client: &AgentClient) -> Result<Self::Answer, RpcError> {
+        client
+            .write_profile_dpi(
+                context::current(),
+                self.route.clone(),
+                self.profile,
+                self.stages.clone(),
+                self.default_stage,
+            )
+            .await
+    }
+
+    fn deliver(self, outcome: Result<Self::Answer, Unavailable>, updates: &UpdateSender) {
+        let _ = updates.send(GuiUpdate::ProfileDpiSaved {
+            key: self.key,
+            profile: self.profile,
+            result: profile_dpi_or_unavailable(outcome),
+        });
+    }
+}
+
+/// Unwrap a profile-DPI answer, standing in for it when the agent could not
+/// be reached.
+fn profile_dpi_or_unavailable<T>(
+    outcome: Result<Result<T, ProfileDpiError>, Unavailable>,
+) -> Result<T, ProfileDpiError> {
+    outcome.unwrap_or(Err(ProfileDpiError::Device(WriteError::AgentUnavailable)))
+}
+
 /// Have the agent re-read the `config.toml` the GUI just saved
 /// ([`openlogi_ipc::Agent::reload_saved_config`]).
 ///
@@ -1166,6 +1236,8 @@ commands! {
     ReadDisableKeys,
     SetDisableKeys,
     ReadOnboard,
+    ReadProfileDpi,
+    WriteProfileDpi,
     ReloadConfig,
     RequestAccessibilityPrompt,
     RetryConnection,

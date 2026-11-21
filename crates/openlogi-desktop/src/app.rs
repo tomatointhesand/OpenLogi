@@ -413,7 +413,7 @@ impl AppView {
                     || (matches!(self.active_tab, DetailTab::Pointer | DetailTab::Device)
                         && is_current(key))
             }
-            StateEvent::OnboardChanged(key) => {
+            StateEvent::OnboardChanged(key) | StateEvent::ProfileDpiChanged(key) => {
                 !on_home && self.active_tab == DetailTab::Pointer && is_current(key)
             }
             StateEvent::CameraChanged => on_home || self.active_tab == DetailTab::Light,

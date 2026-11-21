@@ -434,6 +434,9 @@ impl DeviceReads {
                 .update_onboard(&observed_key, flight, load)
             {
                 cx.emit(StateEvent::OnboardChanged(observed_key.clone()));
+                // Who owns the mouse may just have become known: a stored
+                // profile owns it, so ask for the stages that profile holds.
+                state.request_current_profile_dpi().emit(cx);
             }
         });
         self.onboard.insert(

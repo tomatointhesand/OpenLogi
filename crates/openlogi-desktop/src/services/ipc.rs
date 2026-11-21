@@ -44,7 +44,8 @@ use std::time::{Duration, Instant};
 
 use openlogi_core::hid::{
     BacklightState, DeviceRoute, DisableKeysState, Dpi, EasySwitchHosts, FnLockState,
-    ForceSensingInfo, LightCommand, PointerSpeed, ReportRateInfo, SidetoneLevel, WriteError,
+    ForceSensingInfo, LightCommand, PointerSpeed, ProfileDpi, ProfileDpiError, ProfileDpiSaved,
+    ProfileIndex, ReportRateInfo, SidetoneLevel, WriteError,
 };
 use openlogi_ipc::client::{self, ConnectError};
 use openlogi_ipc::{
@@ -73,11 +74,11 @@ pub use request::PollEventMonitor;
 pub use request::{
     CancelFlowPairing, CancelPairing, Command, ConfirmFlowPairing, LoadConfig, PairDevice,
     PairFlowPeer, ReadBacklight, ReadDisableKeys, ReadDpi, ReadEasySwitchHosts, ReadFnLock,
-    ReadForceSensing, ReadOnboard, ReadPointerSpeed, ReadReportRate, ReadSidetone, ReadSmartShift,
-    ReloadConfig, RenameEasySwitchHost, RequestAccessibilityPrompt, RetryConnection, SetBacklight,
-    SetDisableKeys, SetDpi, SetFnLock, SetForceSensing, SetLight, SetLightManualPower, SetLighting,
-    SetPointerSpeed, SetReportRate, SetSidetone, SetSmartShift, StartFlowPairing, StartPairing,
-    StopFlowPairing, UnpairDevice,
+    ReadForceSensing, ReadOnboard, ReadPointerSpeed, ReadProfileDpi, ReadReportRate, ReadSidetone,
+    ReadSmartShift, ReloadConfig, RenameEasySwitchHost, RequestAccessibilityPrompt,
+    RetryConnection, SetBacklight, SetDisableKeys, SetDpi, SetFnLock, SetForceSensing, SetLight,
+    SetLightManualPower, SetLighting, SetPointerSpeed, SetReportRate, SetSidetone, SetSmartShift,
+    StartFlowPairing, StartPairing, StopFlowPairing, UnpairDevice, WriteProfileDpi,
 };
 
 /// Complete identity of one Disable Keys write/reload transaction.
@@ -237,6 +238,26 @@ pub enum GuiUpdate {
         write: u64,
         /// The read-back, or why the rename did not land.
         result: Result<EasySwitchHosts, WriteError>,
+    },
+    /// The DPI stages a mouse's profile stores, as read. Answers
+    /// [`ReadProfileDpi`].
+    ProfileDpiRead {
+        /// The mouse that was read.
+        key: DeviceKey,
+        /// The profile that was read: [`ReadProfileDpi::profile`].
+        profile: ProfileIndex,
+        /// The stages, or why they could not be read.
+        result: Result<ProfileDpi, ProfileDpiError>,
+    },
+    /// What a mouse reports after the GUI saved DPI stages into its profile:
+    /// what it holds now, or the typed refusal. Answers [`WriteProfileDpi`].
+    ProfileDpiSaved {
+        /// The mouse that was written.
+        key: DeviceKey,
+        /// The profile that was written: [`WriteProfileDpi::profile`].
+        profile: ProfileIndex,
+        /// The read-back and the backup file, or why the save did not land.
+        result: Result<ProfileDpiSaved, ProfileDpiError>,
     },
     /// A pairing command could not be delivered, so no session will ever appear
     /// in the observed state to explain the silence. Reported locally rather
