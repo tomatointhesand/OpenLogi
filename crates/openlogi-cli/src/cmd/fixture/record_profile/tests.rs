@@ -10,8 +10,9 @@ use openlogi_core::device::DeviceInventory;
 use openlogi_core::hid::{
     BacklightChange, BacklightControls, BacklightMode, BacklightState, BacklightStatus,
     DisableKeysMask, DisableKeysState, Dpi, DpiInfo, EasySwitchHosts, EasySwitchSlot, FnLockState,
-    ForceSensingInfo, HostConnection, LightCommand, PasskeyMethod, PointerSpeed, ReceiverSelector,
-    ReportRate, ReportRateInfo, ScrollWheelMode, SidetoneLevel, SmartShiftStatus,
+    ForceSensingInfo, HostConnection, LightCommand, PasskeyMethod, PointerSpeed, ProfileDpi,
+    ProfileDpiError, ProfileDpiSaved, ProfileIndex, ReceiverSelector, ReportRate, ReportRateInfo,
+    ScrollWheelMode, SidetoneLevel, SmartShiftStatus,
 };
 use openlogi_fixture::{
     CANONICAL_DEVICE_PROFILE_JSON, SyntheticIdentityKind, classify_synthetic_identity_bytes,
@@ -457,6 +458,26 @@ impl Agent for TestAgent {
         _session_id: u64,
     ) -> Result<(), ActionRingCommandError> {
         unreachable!("profile capture must not drive the Actions Ring")
+    }
+
+    async fn read_profile_dpi(
+        self,
+        _: TarpcContext,
+        _route: DeviceRoute,
+        _profile: ProfileIndex,
+    ) -> Result<ProfileDpi, ProfileDpiError> {
+        unreachable!("profile capture must not read profile DPI")
+    }
+
+    async fn write_profile_dpi(
+        self,
+        _: TarpcContext,
+        _route: DeviceRoute,
+        _profile: ProfileIndex,
+        _stages: Vec<Dpi>,
+        _default_stage: u8,
+    ) -> Result<ProfileDpiSaved, ProfileDpiError> {
+        unreachable!("profile capture must never write the mouse")
     }
 
     async fn reload_saved_config(

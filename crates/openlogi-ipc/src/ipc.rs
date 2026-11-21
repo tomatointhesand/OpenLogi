@@ -21,8 +21,9 @@ use openlogi_core::device::{
 use openlogi_core::hid::{
     BacklightChange, BacklightState, DeviceRoute, DisableKeysMask, DisableKeysState, Dpi, DpiInfo,
     EasySwitchHosts, FnLockState, ForceSensingInfo, LightCommand, OnboardState, PairingError,
-    PasskeyMethod, PointerSpeed, ReceiverSelector, ReportRate, ReportRateInfo, ScrollWheelMode,
-    SidetoneLevel, SmartShiftStatus, WriteError,
+    PasskeyMethod, PointerSpeed, ProfileDpi, ProfileDpiError, ProfileDpiSaved, ProfileIndex,
+    ReceiverSelector, ReportRate, ReportRateInfo, ScrollWheelMode, SidetoneLevel, SmartShiftStatus,
+    WriteError,
 };
 use serde::{Deserialize, Serialize};
 pub use succession::Identity;
@@ -194,7 +195,10 @@ pub use succession::Identity;
 ///      and `ActionRingIcon::{Channel1, Channel2, Channel3}` appended after
 ///      them — a device's move to another Easy-Switch channel, bound to a
 ///      button or an Actions Ring slot.
-pub const PROTOCOL_VERSION: u32 = 46;
+/// v47: `Agent::{read_profile_dpi, write_profile_dpi}` appended, with
+///      `ProfileDpi`, `ProfileDpiSaved` and `ProfileDpiError` — the DPI stages
+///      of a G-series mouse's onboard profile, read and saved.
+pub const PROTOCOL_VERSION: u32 = 47;
 
 /// Environment variable through which the agent hands a supervised helper the
 /// run token it will serve, so the helper knows which agent it belongs to
@@ -1263,4 +1267,25 @@ pub trait Agent {
     /// held trigger cancels instead of choosing the slot last reported by
     /// [`Agent::action_ring_hover`].
     async fn action_ring_unhover(session_id: u64) -> Result<(), ActionRingCommandError>;
+
+    /// Read the DPI stages stored in onboard profile `profile` of the mouse on
+    /// `route`. Read-only, and answered in either mode.
+    async fn read_profile_dpi(
+        route: DeviceRoute,
+        profile: ProfileIndex,
+    ) -> Result<ProfileDpi, ProfileDpiError>;
+    /// Save DPI `stages` (one to five) and the `default_stage` into onboard
+    /// profile `profile` of the mouse on `route`.
+    ///
+    /// This rewrites the mouse's flash. The agent refuses unless the mouse is
+    /// running its own profiles, only touches a profile sector the mouse
+    /// lists, keeps a backup file of the profile as it was before writing
+    /// (named in the answer), reads the write back and puts the original back
+    /// if it did not land.
+    async fn write_profile_dpi(
+        route: DeviceRoute,
+        profile: ProfileIndex,
+        stages: Vec<Dpi>,
+        default_stage: u8,
+    ) -> Result<ProfileDpiSaved, ProfileDpiError>;
 }

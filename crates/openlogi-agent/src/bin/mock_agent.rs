@@ -64,6 +64,7 @@ use openlogi_core::device::{
     PairedDevice, StandaloneDevice, prettify_codename,
 };
 use openlogi_core::hid::{DisableKeysMask, DisableKeysState, HidppOperation};
+use openlogi_core::hid::{ProfileDpi, ProfileDpiError, ProfileDpiSaved, ProfileIndex};
 use openlogi_core::single_instance::{self, InstanceError, Role};
 use openlogi_fixture::{DeviceProfile, FixtureError, ProfileDeviceSettings, ProfileSetting};
 use openlogi_hid::{
@@ -1602,6 +1603,32 @@ impl Agent for MockAgent {
         _session_id: u64,
     ) -> Result<(), ActionRingCommandError> {
         Err(ActionRingCommandError::SessionNotFound)
+    }
+
+    async fn read_profile_dpi(
+        self,
+        _: Context,
+        route: DeviceRoute,
+        _profile: ProfileIndex,
+    ) -> Result<ProfileDpi, ProfileDpiError> {
+        info!(%route, "read_profile_dpi (no onboard memory in the mock)");
+        Err(ProfileDpiError::Device(WriteError::FeatureUnsupported {
+            feature_hex: 0x8100,
+        }))
+    }
+
+    async fn write_profile_dpi(
+        self,
+        _: Context,
+        route: DeviceRoute,
+        _profile: ProfileIndex,
+        _stages: Vec<Dpi>,
+        _default_stage: u8,
+    ) -> Result<ProfileDpiSaved, ProfileDpiError> {
+        info!(%route, "write_profile_dpi (no onboard memory in the mock)");
+        Err(ProfileDpiError::Device(WriteError::FeatureUnsupported {
+            feature_hex: 0x8100,
+        }))
     }
 }
 

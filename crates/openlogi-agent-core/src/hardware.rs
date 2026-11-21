@@ -56,6 +56,10 @@ pub(crate) use write_order::{WriteOrder, WriteTicket};
 /// under a second.
 pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How long a flash write may take: the sequence is some fifty requests, and
+/// stopping one midway is worse than waiting.
+pub(crate) const FLASH_WRITE_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Physical transport behind a route. Slots on one receiver share a HID writer,
 /// so they share one turnstile even though their device indices differ.
 #[derive(Clone, PartialEq, Eq)]
@@ -389,13 +393,48 @@ impl DeviceOp {
         F: FnOnce(SharedChannel) -> Fut,
         Fut: Future<Output = Result<T, WriteError>>,
     {
+        self.run_for(op, WRITE_TIMEOUT, f).await
+    }
+
+    /// [`Self::run`] for a flash write: a [`FLASH_WRITE_TIMEOUT`] budget, and
+    /// the write is its own task, so it runs to its end (or its restore) even
+    /// if the requester disconnects meanwhile. The receiver lease and the
+    /// transport turn stay held for all of it.
+    pub async fn run_to_completion<F, Fut, T>(
+        self,
+        op: HidppOperation,
+        f: F,
+    ) -> Result<T, WriteError>
+    where
+        Self: Send + 'static,
+        F: FnOnce(SharedChannel) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<T, WriteError>> + Send,
+        T: Send + 'static,
+    {
+        finish_even_if_abandoned(
+            op,
+            async move { self.run_for(op, FLASH_WRITE_TIMEOUT, f).await },
+        )
+        .await
+    }
+
+    async fn run_for<F, Fut, T>(
+        self,
+        op: HidppOperation,
+        budget: Duration,
+        f: F,
+    ) -> Result<T, WriteError>
+    where
+        F: FnOnce(SharedChannel) -> Fut,
+        Fut: Future<Output = Result<T, WriteError>>,
+    {
         if !self.access.device_io.allows_io() {
             return Err(WriteError::DeviceNotFound);
         }
         let turn = self.access.transport_turns.turn_for(&self.route);
         let _lease = self.access.receiver_access.acquire_for_io().await;
         after_transport_turn(&turn, async {
-            timed(op, async { f(self.reach(op).await?).await }).await
+            timed_for(op, budget, async { f(self.reach(op).await?).await }).await
         })
         .await
     }
@@ -1692,7 +1731,32 @@ async fn timed<T>(
     operation: HidppOperation,
     fut: impl Future<Output = Result<T, WriteError>>,
 ) -> Result<T, WriteError> {
-    tokio::time::timeout(WRITE_TIMEOUT, fut)
+    timed_for(operation, WRITE_TIMEOUT, fut).await
+}
+
+/// [`timed`] with a budget of the caller's choosing.
+async fn timed_for<T>(
+    operation: HidppOperation,
+    budget: Duration,
+    fut: impl Future<Output = Result<T, WriteError>>,
+) -> Result<T, WriteError> {
+    tokio::time::timeout(budget, fut)
+        .await
+        .map_err(|_| WriteError::RequestTimedOut { operation })?
+}
+
+/// Run `fut` as its own task and wait for it. If the waiting is dropped (the
+/// requester went away or gave up), `fut` still runs to its end: a flash write
+/// stopped between its first and last step would leave the profile half
+/// written.
+async fn finish_even_if_abandoned<T>(
+    operation: HidppOperation,
+    fut: impl Future<Output = Result<T, WriteError>> + Send + 'static,
+) -> Result<T, WriteError>
+where
+    T: Send + 'static,
+{
+    tokio::spawn(fut)
         .await
         .map_err(|_| WriteError::RequestTimedOut { operation })?
 }
@@ -1875,6 +1939,65 @@ mod tests {
             !called.load(Ordering::SeqCst),
             "the write closure must not run while host device I/O is suspended",
         );
+    }
+
+    /// A flash write must outlast the ordinary request budget, and keep
+    /// running when whoever asked for it goes away mid-way.
+    #[tokio::test(start_paused = true)]
+    async fn a_longer_budget_lets_a_slow_call_finish() {
+        let slow = async {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            Ok::<_, WriteError>(7)
+        };
+        assert_eq!(
+            timed_for(HidppOperation::ReadOnboard, Duration::from_secs(30), slow)
+                .await
+                .unwrap(),
+            7
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_call_past_its_budget_times_out() {
+        let stuck = async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            Ok::<_, WriteError>(())
+        };
+        let result = timed_for(HidppOperation::ReadOnboard, Duration::from_secs(30), stuck).await;
+        assert!(matches!(
+            result,
+            Err(WriteError::RequestTimedOut {
+                operation: HidppOperation::ReadOnboard
+            })
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_abandoned_write_still_runs_to_the_end() {
+        let finished = std::sync::Arc::new(AtomicBool::new(false));
+        let flag = std::sync::Arc::clone(&finished);
+        let write = async move {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            flag.store(true, Ordering::SeqCst);
+            Ok::<_, WriteError>(())
+        };
+        // The caller gives up after a second: dropping the future it awaits.
+        let caller = tokio::time::timeout(
+            Duration::from_secs(1),
+            finish_even_if_abandoned(HidppOperation::ReadOnboard, write),
+        );
+        caller.await.unwrap_err();
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        assert!(finished.load(Ordering::SeqCst), "the write was cut short");
+    }
+
+    #[tokio::test]
+    async fn a_write_that_finishes_gives_its_result_to_the_caller() {
+        let result = finish_even_if_abandoned(HidppOperation::ReadOnboard, async {
+            Ok::<_, WriteError>(3)
+        })
+        .await;
+        assert_eq!(result.unwrap(), 3);
     }
 
     /// Every combination of the two independently configured wheel settings.

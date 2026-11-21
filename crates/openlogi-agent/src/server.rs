@@ -22,6 +22,7 @@ use openlogi_agent_core::runtime::ActionDispatcher;
 use openlogi_core::binding::ActionRingSlot;
 use openlogi_core::config::{ConfigFile, ConfigRevision, Lighting};
 use openlogi_core::device::DeviceInventory;
+use openlogi_core::hid::{ProfileDpi, ProfileDpiError, ProfileDpiSaved, ProfileIndex};
 use openlogi_hid::{
     BacklightChange, BacklightState, DeviceRoute, Dpi, DpiInfo, EasySwitchHosts, FnLockState,
     ForceSensingInfo, HapticRestore, HapticRestoreOutcome, HapticWaveform, HidppOperation,
@@ -598,6 +599,60 @@ impl Agent for AgentServer {
         session_id: u64,
     ) -> Result<(), ActionRingCommandError> {
         self.action_ring.unhover(session_id)
+    }
+
+    async fn read_profile_dpi(
+        self,
+        _: Context,
+        route: DeviceRoute,
+        profile: ProfileIndex,
+    ) -> Result<ProfileDpi, ProfileDpiError> {
+        self.shared
+            .device(&route)
+            .run(HidppOperation::ReadOnboard, move |c| async move {
+                Ok(openlogi_hid::write::profile_edit::read_profile_dpi_on(&c, profile).await)
+            })
+            .await
+            .map_err(ProfileDpiError::Device)?
+    }
+
+    async fn write_profile_dpi(
+        self,
+        _: Context,
+        route: DeviceRoute,
+        profile: ProfileIndex,
+        stages: Vec<Dpi>,
+        default_stage: u8,
+    ) -> Result<ProfileDpiSaved, ProfileDpiError> {
+        let backup_dir = openlogi_core::paths::state_dir()
+            .map_err(|error| ProfileDpiError::BackupFailed(error.to_string()))?
+            .join("profile-backups");
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs());
+        info!(%route, %profile, stages = stages.len(), default_stage, "saving DPI stages to the mouse");
+        let result = self
+            .shared
+            .device(&route)
+            .run_to_completion(HidppOperation::ReadOnboard, move |c| async move {
+                Ok(openlogi_hid::write::profile_edit::save_profile_dpi_on(
+                    &c,
+                    profile,
+                    &stages,
+                    default_stage,
+                    &backup_dir,
+                    "mouse",
+                    now_secs,
+                )
+                .await)
+            })
+            .await
+            .map_err(ProfileDpiError::Device)?;
+        match &result {
+            Ok(saved) => info!(%route, backup = %saved.backup, "DPI stages saved"),
+            Err(error) => warn!(%route, %error, "saving DPI stages failed"),
+        }
+        result
     }
 }
 

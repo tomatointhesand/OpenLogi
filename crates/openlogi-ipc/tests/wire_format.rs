@@ -50,9 +50,10 @@ use openlogi_core::hid::{
     BacklightStatus, Click, DeviceRoute, DisableKeysMask, DisableKeysState, Dpi, DpiCapabilities,
     DpiInfo, EasySwitchHosts, EasySwitchSlot, FnLockState, ForceSensingInfo, HidppFeatureErrorKind,
     HidppOperation, HostConnection, HostOsInfo, HostOsKind, LightCommand, OnboardMode,
-    OnboardProfile, OnboardState, PasskeyMethod, ProfileIndex, ReceiverSelector, ReportRate,
-    ReportRateInfo, ScrollReportingTarget, ScrollWheelMode, SidetoneLevel, SmartShiftAutoDisengage,
-    SmartShiftMode, SmartShiftStatus, SmartShiftThreshold, TunableTorque, WriteError,
+    OnboardProfile, OnboardState, PasskeyMethod, ProfileDpi, ProfileDpiError, ProfileDpiSaved,
+    ProfileIndex, ReceiverSelector, ReportRate, ReportRateInfo, ScrollReportingTarget,
+    ScrollWheelMode, SidetoneLevel, SmartShiftAutoDisengage, SmartShiftMode, SmartShiftStatus,
+    SmartShiftThreshold, TunableTorque, WriteError,
 };
 use openlogi_ipc::{
     ActionRingCommandError, ActionRingInvocation, ActionRingPresentation, AgentRequest,
@@ -119,7 +120,7 @@ fn representative_smartshift_status() -> SmartShiftStatus {
 /// unreleased version and leave this pin alone (`crates/openlogi-ipc/AGENTS.md`).
 #[test]
 fn protocol_version_is_pinned() {
-    assert_eq!(PROTOCOL_VERSION, 46);
+    assert_eq!(PROTOCOL_VERSION, 47);
 }
 
 #[test]
@@ -1009,6 +1010,64 @@ fn onboard_state() {
             }],
         },
         "0001050105010553746f636b01",
+    );
+}
+
+#[test]
+fn profile_dpi() {
+    let route = DeviceRoute::Bolt {
+        receiver_uid: "F00DCAFE".into(),
+        slot: 1,
+    };
+    assert_wire(
+        &AgentRequest::ReadProfileDpi {
+            route: route.clone(),
+            profile: ProfileIndex::new(1).unwrap(),
+        },
+        "3a000846303044434146450101",
+    );
+    assert_wire(
+        &AgentRequest::WriteProfileDpi {
+            route,
+            profile: ProfileIndex::new(1).unwrap(),
+            stages: vec![Dpi::new(800), Dpi::new(3200)],
+            default_stage: 1,
+        },
+        "3b00084630304443414645010102fb2003fb800c01",
+    );
+    let stored = ProfileDpi {
+        profile: ProfileIndex::new(1).unwrap(),
+        stages: vec![Dpi::new(800), Dpi::new(3200)],
+        default_stage: 0,
+    };
+    assert_wire(&stored, "0102fb2003fb800c00");
+    assert_wire(
+        &ProfileDpiSaved {
+            saved: stored,
+            backup: "b".into(),
+        },
+        "0102fb2003fb800c000162",
+    );
+    assert_wire(&ProfileDpiError::HostMode, "01");
+    assert_wire(&ProfileDpiError::Device(WriteError::DeviceNotFound), "0001");
+    assert_wire(
+        &ProfileDpiError::NoSuchProfile(ProfileIndex::new(2).unwrap()),
+        "0202",
+    );
+    assert_wire(
+        &ProfileDpiError::ProfileDisabled(ProfileIndex::new(2).unwrap()),
+        "0302",
+    );
+    assert_wire(&ProfileDpiError::Unsupported("u".into()), "040175");
+    assert_wire(&ProfileDpiError::Invalid("i".into()), "050169");
+    assert_wire(&ProfileDpiError::BackupFailed("f".into()), "060166");
+    assert_wire(
+        &ProfileDpiError::Failed {
+            reason: "r".into(),
+            restored: true,
+            backup: "b".into(),
+        },
+        "070172010162",
     );
 }
 
