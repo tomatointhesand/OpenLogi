@@ -754,6 +754,7 @@ camera_light_auto_description = "Enciende la luz mientras se usa alguna cámara 
 keyboard_lighting_description = "OpenLogi la aplica mientras se ejecuta; no se guarda en el teclado."
 profile_led_stored = "El ratón conserva %{color} con un brillo del %{brightness} % cuando OpenLogi no se está ejecutando."
 profile_led_unsaved = "Este color y brillo aún no se han guardado en el ratón."
+profile_led_needs_profile = "El ratón muestra su propio color mientras OpenLogi lo controla. Cámbialo a un perfil en la pestaña Puntero para guardar un color en el ratón."
 
 [action_ring]
 actions_ring = "Anillo de acciones"

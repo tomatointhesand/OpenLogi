@@ -754,6 +754,7 @@ camera_light_auto_description = "Włączaj światło, gdy używana jest dowolna 
 keyboard_lighting_description = "Stosowane przez OpenLogi, gdy działa; nie jest zapisywane w klawiaturze."
 profile_led_stored = "Mysz zachowuje %{color} z jasnością %{brightness}%, gdy OpenLogi nie działa."
 profile_led_unsaved = "Ten kolor i jasność nie są jeszcze zapisane w myszy."
+profile_led_needs_profile = "Mysz pokazuje własny kolor, gdy steruje nią OpenLogi. Przełącz ją na profil na karcie Wskaźnik, aby zapisać kolor w myszy."
 
 [action_ring]
 actions_ring = "Pierścień akcji"

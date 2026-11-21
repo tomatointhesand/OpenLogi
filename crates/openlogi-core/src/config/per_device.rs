@@ -586,6 +586,17 @@ impl Config {
         needs_host.then_some(OnboardMemory::Off)
     }
 
+    /// Whether a stored profile runs the mouse, and so keeps its own LED
+    /// colour: the profile's colour shows until the user keeps another one in
+    /// it, so OpenLogi writes no colour of its own meanwhile.
+    #[must_use]
+    pub fn profile_owns_lighting(&self, device_key: &str, layout: Option<&GamingLayout>) -> bool {
+        matches!(
+            self.effective_onboard_memory(device_key, layout),
+            Some(OnboardMemory::Profile(_))
+        )
+    }
+
     /// Record the SmartShift wheel config for `device_key`, so the agent can
     /// re-apply it when the device reconnects (#189).
     pub fn set_smartshift(&mut self, device_key: &str, smartshift: SmartShift) {

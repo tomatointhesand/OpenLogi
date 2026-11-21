@@ -6,7 +6,7 @@ use super::*;
 use crate::services::ipc::{Command, ReadProfileLed, WriteProfileLed};
 use crate::state::events::StateEvent;
 use crate::state::profile_dpi::ProfileSave;
-use crate::state::profile_led::LedLoad;
+use crate::state::profile_led::{LedKeep, LedLoad};
 use openlogi_core::config::OnboardMemory;
 use openlogi_core::hid::{ProfileDpiError, ProfileIndex, ProfileLed, ProfileLedSaved};
 
@@ -159,4 +159,36 @@ fn an_answer_for_another_profile_is_dropped() {
             .is_empty()
     );
     assert_eq!(state.current_led_panel().unwrap().load(), &LedLoad::Loading);
+}
+
+fn lighting_writes(commands: Vec<Command>) -> usize {
+    commands
+        .into_iter()
+        .filter(|command| matches!(command, Command::SetLighting(_)))
+        .count()
+}
+
+#[test]
+fn a_colour_picked_while_a_profile_runs_the_mouse_is_kept_but_not_shown() {
+    let (mut state, mut receiver) = mouse_on_profile();
+    drain(&mut receiver);
+    let _ = state.commit_lighting(Lighting::default());
+    assert_eq!(lighting_writes(drain(&mut receiver)), 0);
+}
+
+#[test]
+fn a_colour_picked_while_openlogi_controls_the_mouse_is_shown() {
+    let (mut state, mut receiver) = mouse_on_profile();
+    let _ = state.commit_onboard_memory(OnboardMemory::Off);
+    drain(&mut receiver);
+    let _ = state.commit_lighting(Lighting::default());
+    assert_eq!(lighting_writes(drain(&mut receiver)), 1);
+}
+
+#[test]
+fn the_keep_row_waits_for_a_profile_to_run_the_mouse() {
+    let (mut state, _receiver) = mouse_on_profile();
+    assert_eq!(state.led_keep(), LedKeep::Profile);
+    let _ = state.commit_onboard_memory(OnboardMemory::Off);
+    assert_eq!(state.led_keep(), LedKeep::NeedsProfile);
 }

@@ -754,6 +754,7 @@ camera_light_auto_description = "Ανάβει το φως όταν χρησιμ�
 keyboard_lighting_description = "Εφαρμόζεται από το OpenLogi όσο εκτελείται και δεν αποθηκεύεται στο πληκτρολόγιο."
 profile_led_stored = "Το ποντίκι κρατά το %{color} με φωτεινότητα %{brightness}% όταν το OpenLogi δεν εκτελείται."
 profile_led_unsaved = "Αυτό το χρώμα και η φωτεινότητα δεν έχουν αποθηκευτεί ακόμη στο ποντίκι."
+profile_led_needs_profile = "Το ποντίκι δείχνει το δικό του χρώμα όσο το ελέγχει το OpenLogi. Αλλάξτε το σε προφίλ στην καρτέλα Δείκτης για να κρατήσει ένα χρώμα."
 
 [action_ring]
 actions_ring = "Δακτύλιος ενεργειών"

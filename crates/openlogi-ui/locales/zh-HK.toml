@@ -754,6 +754,7 @@ camera_light_auto_description = "任何攝影機使用時開燈，所有攝影�
 keyboard_lighting_description = "由 OpenLogi 在執行時套用，不會儲存在鍵盤中。"
 profile_led_stored = "OpenLogi 未運行時，滑鼠會保持 %{color}，亮度 %{brightness}%。"
 profile_led_unsaved = "此顏色和亮度尚未儲存到滑鼠。"
+profile_led_needs_profile = "OpenLogi 控制滑鼠時，滑鼠會顯示自己的顏色。請在「指標」分頁將其切換到設定檔，以便把顏色儲存在滑鼠上。"
 
 [action_ring]
 actions_ring = "動作環"

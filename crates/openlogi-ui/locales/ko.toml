@@ -754,6 +754,7 @@ camera_light_auto_description = "카메라를 하나라도 사용 중이면 조�
 keyboard_lighting_description = "OpenLogi가 실행 중일 때 적용되며 키보드에는 저장되지 않습니다."
 profile_led_stored = "OpenLogi가 실행 중이 아닐 때 마우스는 %{color}, 밝기 %{brightness}%를 유지합니다."
 profile_led_unsaved = "이 색상과 밝기는 아직 마우스에 저장되지 않았습니다."
+profile_led_needs_profile = "OpenLogi가 제어하는 동안 마우스는 자체 색상을 표시합니다. 마우스에 색상을 저장하려면 포인터 탭에서 프로필로 전환하세요."
 
 [action_ring]
 actions_ring = "액션 링"

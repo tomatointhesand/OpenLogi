@@ -754,6 +754,7 @@ camera_light_auto_description = "Tænd lyset, når et kamera er i brug, og sluk 
 keyboard_lighting_description = "Anvendes af OpenLogi, mens det kører, og gemmes ikke på tastaturet."
 profile_led_stored = "Musen beholder %{color} ved %{brightness}% lysstyrke, når OpenLogi ikke kører."
 profile_led_unsaved = "Denne farve og lysstyrke er ikke gemt på musen endnu."
+profile_led_needs_profile = "Musen viser sin egen farve, mens OpenLogi styrer den. Skift den til en profil under fanen Markør for at gemme en farve på musen."
 
 [action_ring]
 actions_ring = "Handlingsring"

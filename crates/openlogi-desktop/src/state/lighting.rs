@@ -60,7 +60,12 @@ impl AppState {
         } else {
             debug!("transient device lighting applied without persistence");
         }
-        if let Some(route) = target {
+        // A mouse run by a stored profile shows that profile's colour; the
+        // choice is kept for when OpenLogi controls it, and shown only by
+        // "keep on the mouse".
+        if let Some(route) = target
+            && self.current_stored_profile().is_none()
+        {
             self.send_ipc(crate::services::ipc::SetLighting { route, lighting });
         }
         events

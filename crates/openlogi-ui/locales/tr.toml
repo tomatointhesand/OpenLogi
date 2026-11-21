@@ -754,6 +754,7 @@ camera_light_auto_description = "Herhangi bir kamera kullanılırken bu ışık 
 keyboard_lighting_description = "OpenLogi çalıştığı sürece uygulanır, klavyeye kaydedilmez."
 profile_led_stored = "OpenLogi çalışmadığında fare %{color} rengini %{brightness}% parlaklıkta tutar."
 profile_led_unsaved = "Bu renk ve parlaklık henüz fareye kaydedilmedi."
+profile_led_needs_profile = "OpenLogi fareyi kontrol ederken fare kendi rengini gösterir. Fareye bir renk kaydetmek için İşaretçi sekmesinde bir profile geçin."
 
 [action_ring]
 actions_ring = "Eylem Halkası"

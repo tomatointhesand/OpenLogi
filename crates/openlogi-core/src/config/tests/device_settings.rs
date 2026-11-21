@@ -740,3 +740,22 @@ fn gshift_is_held_only_by_a_plain_binding() {
     cfg.set_binding("g502", ButtonId::Forward, Binding::Single(Action::GShift));
     assert!(cfg.uses_gshift("g502"));
 }
+
+#[test]
+fn a_stored_profile_owns_the_lighting_only_while_it_runs_the_mouse() {
+    let layout = Some(&G502_LIGHTSPEED);
+    let mut cfg = Config::default();
+    assert!(!cfg.profile_owns_lighting("g502", layout));
+
+    cfg.set_onboard_memory("g502", Some(OnboardMemory::Off));
+    assert!(!cfg.profile_owns_lighting("g502", layout));
+
+    cfg.set_onboard_memory(
+        "g502",
+        Some(OnboardMemory::Profile(
+            crate::hid::ProfileIndex::new(1).unwrap(),
+        )),
+    );
+    assert!(cfg.profile_owns_lighting("g502", layout));
+    assert!(!cfg.profile_owns_lighting("other", layout));
+}

@@ -754,6 +754,7 @@ camera_light_auto_description = "Sytyttää valon, kun jokin kamera on käytöss
 keyboard_lighting_description = "OpenLogi käyttää sitä ollessaan käynnissä; sitä ei tallenneta näppäimistöön."
 profile_led_stored = "Hiiri pitää värin %{color} kirkkaudella %{brightness} %, kun OpenLogi ei ole käynnissä."
 profile_led_unsaved = "Tätä väriä ja kirkkautta ei ole vielä tallennettu hiireen."
+profile_led_needs_profile = "Hiiri näyttää oman värinsä, kun OpenLogi ohjaa sitä. Vaihda se profiiliin Osoitin-välilehdellä, jotta väri tallentuu hiireen."
 
 [action_ring]
 actions_ring = "Toimintorengas"

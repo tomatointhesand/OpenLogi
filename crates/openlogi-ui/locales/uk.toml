@@ -754,6 +754,7 @@ camera_light_auto_description = "Вмикати це світло, поки ви
 keyboard_lighting_description = "Застосовується OpenLogi, поки він працює, і не зберігається в клавіатурі."
 profile_led_stored = "Миша зберігає %{color} з яскравістю %{brightness}%, коли OpenLogi не запущено."
 profile_led_unsaved = "Цей колір і яскравість ще не збережено на миші."
+profile_led_needs_profile = "Поки мишею керує OpenLogi, вона показує власний колір. Перемкніть її на профіль на вкладці «Вказівник», щоб зберегти колір у миші."
 
 [action_ring]
 actions_ring = "Кільце дій"

@@ -47,7 +47,7 @@ pub use load::{
 pub(crate) use profile_dpi::{
     ProfileLoad, ProfilePanel, ProfileSave, active_stage, short_backup_path,
 };
-pub(crate) use profile_led::{LedLoad, LedPanel};
+pub(crate) use profile_led::{LedKeep, LedLoad, LedPanel};
 
 /// Result of confirming a SmartShift write by reading the value back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

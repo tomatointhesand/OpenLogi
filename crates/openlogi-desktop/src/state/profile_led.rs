@@ -15,6 +15,19 @@ use super::events::{StateEvent, StateEvents};
 use super::profile_dpi::ProfileSave;
 use crate::services::ipc::{ReadProfileLed, WriteProfileLed};
 
+/// Whether the Lighting tab can keep a colour on the selected mouse now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LedKeep {
+    /// The mouse has no stored profiles to keep a colour in.
+    Unsupported,
+    /// OpenLogi controls the mouse, so a stored profile does not show its
+    /// colour: the choice would not be visible, and keeping it waits for a
+    /// profile to run the mouse.
+    NeedsProfile,
+    /// A stored profile runs the mouse.
+    Profile,
+}
+
 /// How reading the stored LED setting stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LedLoad {
@@ -133,6 +146,18 @@ impl LedPanel {
 }
 
 impl AppState {
+    /// Whether the selected mouse can keep a colour in a stored profile now.
+    #[must_use]
+    pub fn led_keep(&self) -> LedKeep {
+        if !self.current_onboard_supported() {
+            LedKeep::Unsupported
+        } else if self.current_stored_profile().is_some() {
+            LedKeep::Profile
+        } else {
+            LedKeep::NeedsProfile
+        }
+    }
+
     /// The selected mouse's stored LED panel, once it has been asked for.
     #[must_use]
     pub fn current_led_panel(&self) -> Option<&LedPanel> {

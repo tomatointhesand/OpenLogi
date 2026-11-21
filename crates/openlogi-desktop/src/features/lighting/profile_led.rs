@@ -10,7 +10,7 @@ use gpui::{AnyElement, App, IntoElement, ParentElement, Styled, Window, div, px}
 use gpui_kit::component::{Disableable as _, WindowExt as _, button::Button, v_flex};
 use openlogi_core::config::Lighting;
 
-use crate::state::{AppState, LedLoad, LedPanel, ProfileSave, short_backup_path};
+use crate::state::{AppState, LedKeep, LedLoad, LedPanel, ProfileSave, short_backup_path};
 use crate::ui::components::save_cancel_footer;
 use crate::ui::theme::{self, Palette, Typography as _};
 
@@ -23,7 +23,13 @@ fn hex([r, g, b]: [u8; 3]) -> String {
 /// The row for the selected mouse, or nothing when its profile does not hold
 /// one fixed colour (or has not been read yet).
 pub(super) fn stored_section(lighting: &Lighting, pal: Palette, cx: &App) -> Option<AnyElement> {
-    let panel = AppState::try_read(cx)?.current_led_panel()?.clone();
+    let state = AppState::try_read(cx)?;
+    match state.led_keep() {
+        LedKeep::Unsupported => return None,
+        LedKeep::NeedsProfile => return Some(needs_profile_section(pal)),
+        LedKeep::Profile => {}
+    }
+    let panel = state.current_led_panel()?.clone();
     let LedLoad::Ready(held) = panel.load() else {
         return None;
     };
@@ -61,6 +67,30 @@ pub(super) fn stored_section(lighting: &Lighting, pal: Palette, cx: &App) -> Opt
             .child(save_status(&panel, chosen, brightness, pal))
             .into_any_element(),
     )
+}
+
+/// The row while OpenLogi controls the mouse: the button is there but off, and
+/// the note says what to do.
+fn needs_profile_section(pal: Palette) -> AnyElement {
+    v_flex()
+        .gap_2()
+        .w_full()
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .text_caption()
+                .text_color(pal.text_muted)
+                .child(tr!("lighting.profile_led_needs_profile")),
+        )
+        .child(
+            Button::new("profile-led-save")
+                .compact()
+                .h(px(BUTTON_H))
+                .label(tr!("pointer.profile_dpi_save"))
+                .disabled(true),
+        )
+        .into_any_element()
 }
 
 /// What the last save, or an unsaved choice, has to say.
