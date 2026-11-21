@@ -4,6 +4,7 @@
 //! The rules below are pure and tested. The device calls at the bottom are
 //! thin glue over the tested pieces and are proven only on a mouse.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use hidpp::{
@@ -12,10 +13,12 @@ use hidpp::{
     feature::onboard_profiles::{
         OnboardMode as WireMode, OnboardProfilesFeature, ProfileEntry,
         profile::ProfileError,
-        profile_io::{self, WriteError as GuardedWriteError},
+        profile_io::{self, ProfileMemory, WriteError as GuardedWriteError},
     },
 };
-use openlogi_core::hid::{OnboardMode, ProfileIndex};
+use openlogi_core::hid::{
+    Dpi, OnboardMode, ProfileDpi, ProfileDpiError, ProfileDpiSaved, ProfileIndex,
+};
 
 pub use hidpp::feature::onboard_profiles::profile::{
     DPI_STAGE_COUNT, ProfileError as ProfileLayoutError, ProfileSector, SectorBackup,
@@ -101,6 +104,199 @@ pub struct ProfileDump {
     pub mode: OnboardMode,
     /// The sector's bytes, as read.
     pub bytes: Vec<u8>,
+}
+
+/// The DPI stages stored in a profile sector read from the mouse.
+pub fn profile_dpi(
+    profile: ProfileIndex,
+    bytes: &[u8],
+    sector_size: usize,
+) -> Result<ProfileDpi, ProfileDpiError> {
+    let sector = ProfileSector::parse(bytes, sector_size)
+        .map_err(|error| ProfileDpiError::Unsupported(error.to_string()))?;
+    Ok(dpi_of(profile, &sector))
+}
+
+fn dpi_of(profile: ProfileIndex, sector: &ProfileSector) -> ProfileDpi {
+    ProfileDpi {
+        profile,
+        stages: sector.presets().into_iter().map(Dpi::new).collect(),
+        default_stage: sector.default_stage(),
+    }
+}
+
+/// Where and how a profile's DPI stages are saved.
+pub struct SaveTarget<'a> {
+    /// The profile being saved.
+    pub profile: ProfileIndex,
+    /// Its flash sector, from the mouse's directory.
+    pub sector: u16,
+    /// The size of every sector on this mouse.
+    pub sector_size: usize,
+    /// Every profile sector the directory lists: the only ones ever written.
+    pub listed: &'a [u16],
+    /// Who owns the mouse now; only its own profiles are rewritten.
+    pub mode: OnboardMode,
+    /// Where the backup of the profile as it was is saved first.
+    pub backup_dir: &'a Path,
+    /// The device's name, for the backup file's name.
+    pub device_name: &'a str,
+    /// The time, for the backup file's name.
+    pub now_secs: u64,
+}
+
+/// Save `stages` (one to five) and `default` into the profile `target` names.
+///
+/// Order: host mode is refused; the sector is read and must be a valid
+/// profile; the new bytes are worked out (nothing is written when they equal
+/// the old); the old bytes are saved to a backup file and read back from disk;
+/// only then is the sector written, read back and, if it did not land, put
+/// back. The result is read from the mouse afterwards.
+pub async fn save_dpi_with(
+    memory: &dyn ProfileMemory,
+    target: &SaveTarget<'_>,
+    stages: &[Dpi],
+    default: u8,
+) -> Result<ProfileDpiSaved, ProfileDpiError> {
+    if target.mode == OnboardMode::Host {
+        return Err(ProfileDpiError::HostMode);
+    }
+    let current = profile_io::read_sector(memory, target.sector, target.sector_size)
+        .await
+        .map_err(|error| ProfileDpiError::Device(memory_failure(&error)))?;
+    let parsed = ProfileSector::parse(&current, target.sector_size)
+        .map_err(|error| ProfileDpiError::Unsupported(error.to_string()))?;
+    let raw: Vec<u16> = stages.iter().map(|stage| stage.into_inner()).collect();
+    let new = parsed
+        .with_dpi_stages(&raw, default)
+        .map_err(edit_refusal)?;
+    if new == parsed {
+        return Ok(ProfileDpiSaved {
+            saved: dpi_of(target.profile, &parsed),
+            backup: String::new(),
+        });
+    }
+
+    let backup = SectorBackup {
+        sector: target.sector,
+        bytes: current,
+    };
+    let file = super::profile_backup::backup_file_name(
+        target.device_name,
+        target.profile.get().get(),
+        target.now_secs,
+    );
+    let path = super::profile_backup::save_and_verify_backup(target.backup_dir, &file, &backup)
+        .map_err(ProfileDpiError::BackupFailed)?;
+    let path = path.display().to_string();
+
+    match profile_io::write_profile_sector(
+        memory,
+        target.sector,
+        target.sector_size,
+        target.listed,
+        &new,
+    )
+    .await
+    {
+        Ok(_) => {}
+        Err(GuardedWriteError::Refused(error)) => {
+            return Err(ProfileDpiError::Unsupported(error.to_string()));
+        }
+        Err(GuardedWriteError::Memory(error)) => {
+            return Err(ProfileDpiError::Failed {
+                reason: error.to_string(),
+                restored: true,
+                backup: path,
+            });
+        }
+        Err(GuardedWriteError::Failed {
+            reason, restored, ..
+        }) => {
+            return Err(ProfileDpiError::Failed {
+                reason,
+                restored,
+                backup: path,
+            });
+        }
+    }
+
+    let after = profile_io::read_sector(memory, target.sector, target.sector_size)
+        .await
+        .map_err(|error| ProfileDpiError::Failed {
+            reason: format!("the profile was written but could not be read back: {error}"),
+            restored: false,
+            backup: path.clone(),
+        })?;
+    Ok(ProfileDpiSaved {
+        saved: profile_dpi(target.profile, &after, target.sector_size)?,
+        backup: path,
+    })
+}
+
+fn edit_refusal(error: ProfileError) -> ProfileDpiError {
+    match error {
+        ProfileError::SplitAxes(_) => ProfileDpiError::Unsupported(error.to_string()),
+        other => ProfileDpiError::Invalid(other.to_string()),
+    }
+}
+
+fn memory_failure(error: &profile_io::MemoryError) -> WriteError {
+    WriteError::Hid(error.to_string())
+}
+
+/// Read the DPI stages of profile `profile` on an open channel. Read-only.
+pub async fn read_profile_dpi_on(
+    shared: &crate::SharedChannel,
+    profile: ProfileIndex,
+) -> Result<ProfileDpi, ProfileDpiError> {
+    let (onboard, sector_size, entries) = open(shared.channel(), shared.device_index())
+        .await
+        .map_err(ProfileDpiError::Device)?;
+    let sector = sector_of(&entries, profile)?;
+    let bytes = profile_io::read_sector(&*onboard, sector, sector_size)
+        .await
+        .map_err(|error| ProfileDpiError::Device(memory_failure(&error)))?;
+    profile_dpi(profile, &bytes, sector_size)
+}
+
+/// Save DPI `stages` and `default` into profile `profile` on an open channel,
+/// through [`save_dpi_with`]'s guards. `backup_dir` and `device_name` name the
+/// backup file kept of the profile as it was.
+pub async fn save_profile_dpi_on(
+    shared: &crate::SharedChannel,
+    profile: ProfileIndex,
+    stages: &[Dpi],
+    default: u8,
+    backup_dir: &Path,
+    device_name: &str,
+    now_secs: u64,
+) -> Result<ProfileDpiSaved, ProfileDpiError> {
+    let (onboard, sector_size, entries) = open(shared.channel(), shared.device_index())
+        .await
+        .map_err(ProfileDpiError::Device)?;
+    let mode = mode_of(&onboard).await.map_err(ProfileDpiError::Device)?;
+    let sector = sector_of(&entries, profile)?;
+    let listed = listed_profile_sectors(&entries);
+    let target = SaveTarget {
+        profile,
+        sector,
+        sector_size,
+        listed: &listed,
+        mode,
+        backup_dir,
+        device_name,
+        now_secs,
+    };
+    save_dpi_with(&*onboard, &target, stages, default).await
+}
+
+fn sector_of(entries: &[ProfileEntry], profile: ProfileIndex) -> Result<u16, ProfileDpiError> {
+    profile_sector_for(entries, profile).map_err(|error| match error {
+        ProfileEditError::NoSuchProfile(index) => ProfileDpiError::NoSuchProfile(index),
+        ProfileEditError::ProfileDisabled(index) => ProfileDpiError::ProfileDisabled(index),
+        other => ProfileDpiError::Invalid(other.to_string()),
+    })
 }
 
 /// Read profile `index` without writing anything.
@@ -309,5 +505,305 @@ mod tests {
         let error = require_onboard_mode(OnboardMode::Host).unwrap_err();
         assert!(matches!(error, ProfileEditError::HostMode));
         assert!(error.to_string().contains("power-cycle"));
+    }
+
+    // -- saving DPI stages ---------------------------------------------------
+
+    use std::sync::Mutex;
+
+    use async_trait::async_trait;
+    use hidpp::feature::onboard_profiles::profile::crc16_ccitt;
+    use hidpp::feature::onboard_profiles::profile_io::{CHUNK, MemoryError, ProfileMemory};
+    use openlogi_core::hid::{Dpi, ProfileDpiError};
+
+    const SIZE: usize = 255;
+
+    /// A valid profile sector with the given stages (both axes) and default.
+    fn sector_bytes(stages: [u16; 5], default: u8) -> Vec<u8> {
+        let mut bytes = vec![0_u8; SIZE];
+        bytes[0] = 3;
+        bytes[1] = default;
+        for (i, stage) in stages.iter().enumerate() {
+            let at = 4 + i * 5;
+            bytes[at..at + 2].copy_from_slice(&stage.to_le_bytes());
+            bytes[at + 2..at + 4].copy_from_slice(&stage.to_le_bytes());
+            bytes[at + 4] = 2;
+        }
+        let end = SIZE - 2;
+        let crc = crc16_ccitt(&bytes[..end]);
+        bytes[end..].copy_from_slice(&crc.to_be_bytes());
+        bytes
+    }
+
+    /// A mouse with one sector, which can be made to fail a write.
+    struct Mouse {
+        flash: Mutex<Vec<u8>>,
+        writes: Mutex<u32>,
+        fail_writes: bool,
+        open: Mutex<Option<(usize, usize)>>,
+    }
+
+    impl Mouse {
+        fn new(bytes: Vec<u8>) -> Self {
+            Self {
+                flash: Mutex::new(bytes),
+                writes: Mutex::new(0),
+                fail_writes: false,
+                open: Mutex::new(None),
+            }
+        }
+        fn bytes(&self) -> Vec<u8> {
+            self.flash.lock().unwrap().clone()
+        }
+        fn write_count(&self) -> u32 {
+            *self.writes.lock().unwrap()
+        }
+    }
+
+    #[async_trait]
+    impl ProfileMemory for Mouse {
+        async fn read(&self, _sector: u16, offset: u16) -> Result<[u8; CHUNK], MemoryError> {
+            let flash = self.flash.lock().unwrap();
+            let at = usize::from(offset);
+            let mut chunk = [0; CHUNK];
+            chunk.copy_from_slice(&flash[at..at + CHUNK]);
+            Ok(chunk)
+        }
+        async fn begin_write(&self, _: u16, offset: u16, len: u16) -> Result<(), MemoryError> {
+            *self.writes.lock().unwrap() += 1;
+            if self.fail_writes {
+                return Err(MemoryError("refused".into()));
+            }
+            *self.open.lock().unwrap() = Some((usize::from(offset), usize::from(len)));
+            Ok(())
+        }
+        async fn write_chunk(&self, chunk: [u8; CHUNK]) -> Result<(), MemoryError> {
+            let mut open = self.open.lock().unwrap();
+            let (at, len) = open
+                .as_mut()
+                .ok_or_else(|| MemoryError("no write".into()))?;
+            let mut flash = self.flash.lock().unwrap();
+            let n = CHUNK.min(*len);
+            flash[*at..*at + n].copy_from_slice(&chunk[..n]);
+            *at += n;
+            *len -= n;
+            Ok(())
+        }
+        async fn end_write(&self) -> Result<(), MemoryError> {
+            *self.open.lock().unwrap() = None;
+            Ok(())
+        }
+    }
+
+    fn dpis(values: &[u16]) -> Vec<Dpi> {
+        values.iter().map(|&v| Dpi::new(v)).collect()
+    }
+
+    fn save_args(dir: &std::path::Path) -> SaveTarget<'_> {
+        SaveTarget {
+            profile: index(1),
+            sector: 1,
+            sector_size: SIZE,
+            listed: &[1, 2, 3, 4, 5],
+            mode: OnboardMode::Onboard,
+            backup_dir: dir,
+            device_name: "PRO 2 LIGHTSPEED",
+            now_secs: 7,
+        }
+    }
+
+    fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+
+    #[test]
+    fn two_stages_are_written_read_back_and_backed_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = sector_bytes([400, 800, 1600, 3200, 6000], 3);
+        let mouse = Mouse::new(original.clone());
+        let saved = block_on(save_dpi_with(
+            &mouse,
+            &save_args(dir.path()),
+            &dpis(&[800, 3200]),
+            0,
+        ))
+        .unwrap();
+        assert_eq!(saved.saved.stages, dpis(&[800, 3200]));
+        assert_eq!(saved.saved.default_stage, 0);
+        assert_eq!(saved.saved.profile, index(1));
+        // the mouse holds a valid two-stage profile
+        let now = ProfileSector::parse(&mouse.bytes(), SIZE).unwrap();
+        assert_eq!(now.dpi_stages(), [800, 3200, 0, 0, 0]);
+        // the original is on disk, exactly
+        let backup =
+            super::super::profile_backup::load_backup(std::path::Path::new(&saved.backup)).unwrap();
+        assert_eq!(backup.bytes, original);
+    }
+
+    #[test]
+    fn host_mode_is_refused_before_anything_is_read_or_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let mouse = Mouse::new(sector_bytes([400, 800, 1600, 3200, 6000], 3));
+        let mut target = save_args(dir.path());
+        target.mode = OnboardMode::Host;
+        let error = block_on(save_dpi_with(&mouse, &target, &dpis(&[800, 3200]), 0)).unwrap_err();
+        assert_eq!(error, ProfileDpiError::HostMode);
+        assert_eq!(mouse.write_count(), 0);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn an_unchanged_save_writes_nothing_and_saves_no_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let mouse = Mouse::new(sector_bytes([800, 3200, 0, 0, 0], 0));
+        let saved = block_on(save_dpi_with(
+            &mouse,
+            &save_args(dir.path()),
+            &dpis(&[800, 3200]),
+            0,
+        ))
+        .unwrap();
+        assert_eq!(saved.backup, "");
+        assert_eq!(mouse.write_count(), 0);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn stages_that_cannot_be_stored_are_refused_before_any_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let mouse = Mouse::new(sector_bytes([400, 800, 1600, 3200, 6000], 3));
+        for (stages, default) in [
+            (dpis(&[]), 0),
+            (dpis(&[1, 2, 3, 4, 5, 6]), 0),
+            (dpis(&[800, 0]), 0),
+            (dpis(&[800, 3200]), 2),
+        ] {
+            let error = block_on(save_dpi_with(
+                &mouse,
+                &save_args(dir.path()),
+                &stages,
+                default,
+            ))
+            .unwrap_err();
+            assert!(
+                matches!(error, ProfileDpiError::Invalid(_)),
+                "{stages:?}: {error:?}"
+            );
+        }
+        assert_eq!(mouse.write_count(), 0);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_profile_that_is_not_understood_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut blank = vec![0xff_u8; SIZE];
+        blank[0] = 0xff;
+        let mouse = Mouse::new(blank);
+        let error = block_on(save_dpi_with(
+            &mouse,
+            &save_args(dir.path()),
+            &dpis(&[800]),
+            0,
+        ))
+        .unwrap_err();
+        assert!(
+            matches!(error, ProfileDpiError::Unsupported(_)),
+            "{error:?}"
+        );
+        assert_eq!(mouse.write_count(), 0);
+    }
+
+    #[test]
+    fn a_profile_with_split_axes_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut bytes = sector_bytes([400, 800, 1600, 3200, 6000], 3);
+        bytes[4 + 2 * 5 + 2..4 + 2 * 5 + 4].copy_from_slice(&1200_u16.to_le_bytes());
+        let end = SIZE - 2;
+        let crc = crc16_ccitt(&bytes[..end]);
+        bytes[end..].copy_from_slice(&crc.to_be_bytes());
+        let mouse = Mouse::new(bytes);
+        let error = block_on(save_dpi_with(
+            &mouse,
+            &save_args(dir.path()),
+            &dpis(&[800]),
+            0,
+        ))
+        .unwrap_err();
+        assert!(
+            matches!(error, ProfileDpiError::Unsupported(_)),
+            "{error:?}"
+        );
+        assert_eq!(mouse.write_count(), 0);
+    }
+
+    /// No backup, no write: a backup that cannot be saved stops everything.
+    #[test]
+    fn a_backup_that_cannot_be_saved_stops_the_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("not-a-dir");
+        std::fs::write(&blocker, "x").unwrap();
+        let mouse = Mouse::new(sector_bytes([400, 800, 1600, 3200, 6000], 3));
+        let mut target = save_args(&blocker);
+        target.backup_dir = &blocker;
+        let error = block_on(save_dpi_with(&mouse, &target, &dpis(&[800, 3200]), 0)).unwrap_err();
+        assert!(
+            matches!(error, ProfileDpiError::BackupFailed(_)),
+            "{error:?}"
+        );
+        assert_eq!(mouse.write_count(), 0);
+    }
+
+    #[test]
+    fn a_refused_write_reports_the_backup_that_was_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = sector_bytes([400, 800, 1600, 3200, 6000], 3);
+        let mut mouse = Mouse::new(original.clone());
+        mouse.fail_writes = true;
+        let error = block_on(save_dpi_with(
+            &mouse,
+            &save_args(dir.path()),
+            &dpis(&[800, 3200]),
+            0,
+        ))
+        .unwrap_err();
+        let ProfileDpiError::Failed { backup, .. } = error else {
+            panic!("expected Failed, got {error:?}");
+        };
+        assert!(!backup.is_empty());
+        assert_eq!(mouse.bytes(), original);
+    }
+
+    #[test]
+    fn a_sector_the_directory_does_not_list_is_never_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let mouse = Mouse::new(sector_bytes([400, 800, 1600, 3200, 6000], 3));
+        let mut target = save_args(dir.path());
+        target.listed = &[2, 3];
+        let error = block_on(save_dpi_with(&mouse, &target, &dpis(&[800, 3200]), 0)).unwrap_err();
+        assert!(
+            matches!(error, ProfileDpiError::Unsupported(_)),
+            "{error:?}"
+        );
+        assert_eq!(mouse.write_count(), 0);
+    }
+
+    #[test]
+    fn reading_a_profile_gives_its_stages_in_use() {
+        let bytes = sector_bytes([800, 3200, 0, 0, 0], 1);
+        let read = profile_dpi(index(1), &bytes, SIZE).unwrap();
+        assert_eq!(read.stages, dpis(&[800, 3200]));
+        assert_eq!(read.default_stage, 1);
+    }
+
+    #[test]
+    fn reading_a_profile_that_is_not_understood_says_so() {
+        assert!(matches!(
+            profile_dpi(index(1), &[0xff; SIZE], SIZE),
+            Err(ProfileDpiError::Unsupported(_))
+        ));
     }
 }
