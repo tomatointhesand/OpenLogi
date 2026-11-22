@@ -226,6 +226,17 @@ pub async fn run_write(args: ProfileWriteArgs) -> Result<()> {
     let (route, name) = select_device(args.device.as_deref(), &[0x8100]).await?;
     println!("device: {name} ({route})");
 
+    if let Some(stages) = &stages {
+        let capabilities = openlogi_hid::get_dpi_info(&route).await?.capabilities;
+        openlogi_hid::write::profile_edit::check_dpi_range(
+            stages,
+            Some((
+                capabilities.min().into_inner(),
+                capabilities.max().into_inner(),
+            )),
+        )?;
+    }
+
     let dump = openlogi_hid::dump_profile(&route, index).await?;
     if dump.mode == OnboardMode::Host {
         bail!("the mouse is in host mode: stop the OpenLogi agent and power-cycle the mouse first");

@@ -44,6 +44,10 @@ pub enum WriteError {
     /// Talking to the mouse failed before anything was written.
     #[error("could not talk to the mouse: {0}")]
     Memory(MemoryError),
+    /// The sector is not what the caller read earlier, so something else
+    /// wrote it meanwhile; nothing was written over that.
+    #[error("the profile changed on the mouse after it was read, so nothing was written")]
+    Changed,
     /// The write went wrong; `restored` says whether the original is back.
     #[error("the write did not land ({reason}); original restored: {restored}")]
     Failed {
@@ -94,12 +98,49 @@ pub async fn write_profile_sector(
     profile_sectors: &[u16],
     new: &ProfileSector,
 ) -> Result<SectorBackup, WriteError> {
+    write_checked(memory, sector, sector_size, profile_sectors, None, new).await
+}
+
+/// [`write_profile_sector`] for an edit made from bytes the caller read
+/// earlier: the sector is read again just before the write, and when it is not
+/// `expected` (another program, such as Logitech's own software, wrote it in
+/// between) nothing is written and the answer is [`WriteError::Changed`].
+pub async fn write_profile_sector_if_unchanged(
+    memory: &dyn ProfileMemory,
+    sector: u16,
+    sector_size: usize,
+    profile_sectors: &[u16],
+    expected: &[u8],
+    new: &ProfileSector,
+) -> Result<SectorBackup, WriteError> {
+    write_checked(
+        memory,
+        sector,
+        sector_size,
+        profile_sectors,
+        Some(expected),
+        new,
+    )
+    .await
+}
+
+async fn write_checked(
+    memory: &dyn ProfileMemory,
+    sector: u16,
+    sector_size: usize,
+    profile_sectors: &[u16],
+    expected: Option<&[u8]>,
+    new: &ProfileSector,
+) -> Result<SectorBackup, WriteError> {
     check_writable_sector(sector, profile_sectors)?;
     check_size(new.as_bytes(), sector_size)?;
     let current = read_sector(memory, sector, sector_size)
         .await
         .map_err(WriteError::Memory)?;
     ProfileSector::parse(&current, sector_size)?;
+    if expected.is_some_and(|expected| expected != current) {
+        return Err(WriteError::Changed);
+    }
     let backup = SectorBackup {
         sector,
         bytes: current,
@@ -394,6 +435,40 @@ mod tests {
         assert_eq!(backup.sector, 1);
         assert_eq!(backup.bytes, old.as_bytes());
         assert_eq!(fake.sector(1), new.as_bytes());
+    }
+
+    #[test]
+    fn a_sector_that_changed_since_it_was_read_is_left_alone() {
+        let held = profile(900);
+        let fake = Fake::holding(1, profile(800).as_bytes());
+        let result = run(write_profile_sector_if_unchanged(
+            &fake,
+            1,
+            SECTOR_SIZE,
+            &PROFILE_SECTORS,
+            held.as_bytes(),
+            &profile(1600),
+        ));
+        assert_eq!(result, Err(WriteError::Changed));
+        assert_eq!(fake.writes_begun(), 0);
+        assert_eq!(fake.sector(1), profile(800).as_bytes());
+    }
+
+    #[test]
+    fn a_sector_still_as_it_was_read_is_written() {
+        let old = profile(800);
+        let fake = Fake::holding(1, old.as_bytes());
+        let backup = run(write_profile_sector_if_unchanged(
+            &fake,
+            1,
+            SECTOR_SIZE,
+            &PROFILE_SECTORS,
+            old.as_bytes(),
+            &profile(1600),
+        ))
+        .unwrap();
+        assert_eq!(backup.bytes, old.as_bytes());
+        assert_eq!(fake.sector(1), profile(1600).as_bytes());
     }
 
     /// One begin for the whole sector, 16-byte chunks, one end, in that order,

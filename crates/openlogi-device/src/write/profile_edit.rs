@@ -173,6 +173,19 @@ pub struct SaveTarget<'a> {
     pub dpi_range: Option<(u16, u16)>,
 }
 
+/// Refuse any of `stages` outside `range`, the lowest and highest DPI the
+/// sensor reports; `None` checks nothing.
+pub fn check_dpi_range(stages: &[u16], range: Option<(u16, u16)>) -> Result<(), ProfileDpiError> {
+    if let Some((low, high)) = range
+        && let Some(outside) = stages.iter().find(|&&dpi| dpi < low || dpi > high)
+    {
+        return Err(ProfileDpiError::Invalid(format!(
+            "{outside} DPI is outside what the sensor supports ({low} to {high})"
+        )));
+    }
+    Ok(())
+}
+
 /// Save `stages` (one to five) and `default` into the profile `target` names.
 ///
 /// Order: host mode is refused; the sector is read and must be a valid
@@ -187,13 +200,7 @@ pub async fn save_dpi_with(
     default: u8,
 ) -> Result<ProfileDpiSaved, ProfileDpiError> {
     let raw: Vec<u16> = stages.iter().map(|stage| stage.into_inner()).collect();
-    if let Some((low, high)) = target.dpi_range
-        && let Some(outside) = raw.iter().find(|&&dpi| dpi < low || dpi > high)
-    {
-        return Err(ProfileDpiError::Invalid(format!(
-            "{outside} DPI is outside what the sensor supports ({low} to {high})"
-        )));
-    }
+    check_dpi_range(&raw, target.dpi_range)?;
     let (after, backup) = save_edit_with(memory, target, |parsed| {
         parsed.with_dpi_stages(&raw, default)
     })
@@ -261,16 +268,24 @@ async fn save_edit_with(
         .map_err(ProfileDpiError::BackupFailed)?;
     let path = path.display().to_string();
 
-    match profile_io::write_profile_sector(
+    match profile_io::write_profile_sector_if_unchanged(
         memory,
         target.sector,
         target.sector_size,
         target.listed,
+        &backup.bytes,
         &new,
     )
     .await
     {
         Ok(_) => {}
+        Err(error @ GuardedWriteError::Changed) => {
+            return Err(ProfileDpiError::Failed {
+                reason: error.to_string(),
+                restored: true,
+                backup: path,
+            });
+        }
         Err(GuardedWriteError::Refused(error)) => {
             return Err(ProfileDpiError::Unsupported(error.to_string()));
         }
@@ -668,6 +683,10 @@ mod tests {
         writes: Mutex<u32>,
         fail_writes: bool,
         open: Mutex<Option<(usize, usize)>>,
+        /// After this many reads the flash becomes these bytes, as when another
+        /// program writes the profile between two of our reads.
+        swap_after_reads: Mutex<Option<(u32, Vec<u8>)>>,
+        reads: Mutex<u32>,
     }
 
     impl Mouse {
@@ -677,6 +696,8 @@ mod tests {
                 writes: Mutex::new(0),
                 fail_writes: false,
                 open: Mutex::new(None),
+                swap_after_reads: Mutex::new(None),
+                reads: Mutex::new(0),
             }
         }
         fn bytes(&self) -> Vec<u8> {
@@ -690,6 +711,13 @@ mod tests {
     #[async_trait]
     impl ProfileMemory for Mouse {
         async fn read(&self, _sector: u16, offset: u16) -> Result<[u8; CHUNK], MemoryError> {
+            let mut reads = self.reads.lock().unwrap();
+            *reads += 1;
+            if let Some((after, bytes)) = self.swap_after_reads.lock().unwrap().as_ref()
+                && *reads == *after + 1
+            {
+                *self.flash.lock().unwrap() = bytes.clone();
+            }
             let flash = self.flash.lock().unwrap();
             let at = usize::from(offset);
             let mut chunk = [0; CHUNK];
@@ -826,6 +854,30 @@ mod tests {
     }
 
     #[test]
+    fn a_profile_another_program_rewrote_meanwhile_is_not_written_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let mine = sector_bytes([400, 800, 1600, 3200, 6000], 3);
+        let theirs = sector_bytes([500, 900, 1700, 3300, 6100], 1);
+        let mouse = Mouse::new(mine);
+        // our first full read is 16 chunks; the swap lands before the second
+        *mouse.swap_after_reads.lock().unwrap() = Some((16, theirs.clone()));
+        let error = block_on(save_dpi_with(
+            &mouse,
+            &save_args(dir.path()),
+            &dpis(&[800, 3200]),
+            0,
+        ))
+        .unwrap_err();
+        assert!(
+            matches!(&error, ProfileDpiError::Failed { reason, restored: true, .. }
+                if reason.contains("changed")),
+            "{error:?}"
+        );
+        assert_eq!(mouse.write_count(), 0);
+        assert_eq!(mouse.bytes(), theirs);
+    }
+
+    #[test]
     fn stages_outside_the_sensors_range_are_refused_before_any_write() {
         let dir = tempfile::tempdir().unwrap();
         let mouse = Mouse::new(sector_bytes([400, 800, 1600, 3200, 6000], 3));
@@ -841,6 +893,12 @@ mod tests {
         }
         assert_eq!(mouse.write_count(), 0);
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn no_known_range_checks_nothing() {
+        assert_eq!(check_dpi_range(&[65_535], None), Ok(()));
+        assert!(check_dpi_range(&[65_535], Some((100, 32_000))).is_err());
     }
 
     #[test]
