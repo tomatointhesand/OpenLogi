@@ -168,6 +168,9 @@ pub struct SaveTarget<'a> {
     pub device_name: &'a str,
     /// The time, for the backup file's name.
     pub now_secs: u64,
+    /// The lowest and highest DPI the sensor reports, which every DPI stage
+    /// saved must lie within; `None` checks nothing. Only a DPI save reads it.
+    pub dpi_range: Option<(u16, u16)>,
 }
 
 /// Save `stages` (one to five) and `default` into the profile `target` names.
@@ -184,6 +187,13 @@ pub async fn save_dpi_with(
     default: u8,
 ) -> Result<ProfileDpiSaved, ProfileDpiError> {
     let raw: Vec<u16> = stages.iter().map(|stage| stage.into_inner()).collect();
+    if let Some((low, high)) = target.dpi_range
+        && let Some(outside) = raw.iter().find(|&&dpi| dpi < low || dpi > high)
+    {
+        return Err(ProfileDpiError::Invalid(format!(
+            "{outside} DPI is outside what the sensor supports ({low} to {high})"
+        )));
+    }
     let (after, backup) = save_edit_with(memory, target, |parsed| {
         parsed.with_dpi_stages(&raw, default)
     })
@@ -340,6 +350,10 @@ pub async fn save_profile_dpi_on(
     let mode = mode_of(&onboard).await.map_err(ProfileDpiError::Device)?;
     let sector = sector_of(&entries, profile)?;
     let listed = listed_profile_sectors(&entries);
+    let capabilities = super::dpi::get_dpi_info_on(shared)
+        .await
+        .map_err(ProfileDpiError::Device)?
+        .capabilities;
     let target = SaveTarget {
         profile,
         sector,
@@ -349,6 +363,10 @@ pub async fn save_profile_dpi_on(
         backup_dir,
         device_name,
         now_secs,
+        dpi_range: Some((
+            capabilities.min().into_inner(),
+            capabilities.max().into_inner(),
+        )),
     };
     save_dpi_with(&*onboard, &target, stages, default).await
 }
@@ -395,6 +413,7 @@ pub async fn save_profile_led_on(
         backup_dir,
         device_name,
         now_secs,
+        dpi_range: None,
     };
     save_led_with(&*onboard, &target, color, brightness).await
 }
@@ -717,6 +736,7 @@ mod tests {
             backup_dir: dir,
             device_name: "PRO 2 LIGHTSPEED",
             now_secs: 7,
+            dpi_range: None,
         }
     }
 
@@ -803,6 +823,34 @@ mod tests {
         }
         assert_eq!(mouse.write_count(), 0);
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn stages_outside_the_sensors_range_are_refused_before_any_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let mouse = Mouse::new(sector_bytes([400, 800, 1600, 3200, 6000], 3));
+        let mut target = save_args(dir.path());
+        target.dpi_range = Some((100, 32_000));
+        for stages in [dpis(&[800, 32_001]), dpis(&[99, 800]), dpis(&[65_535])] {
+            let error = block_on(save_dpi_with(&mouse, &target, &stages, 0)).unwrap_err();
+            assert!(
+                matches!(&error, ProfileDpiError::Invalid(text)
+                    if text.contains("100") && text.contains("32000")),
+                "{stages:?}: {error:?}"
+            );
+        }
+        assert_eq!(mouse.write_count(), 0);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn stages_at_the_edges_of_the_sensors_range_are_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let mouse = Mouse::new(sector_bytes([400, 800, 1600, 3200, 6000], 3));
+        let mut target = save_args(dir.path());
+        target.dpi_range = Some((100, 32_000));
+        let saved = block_on(save_dpi_with(&mouse, &target, &dpis(&[100, 32_000]), 1)).unwrap();
+        assert_eq!(saved.saved.stages, dpis(&[100, 32_000]));
     }
 
     #[test]
