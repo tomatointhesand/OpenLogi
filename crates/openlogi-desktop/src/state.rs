@@ -48,6 +48,7 @@ pub(crate) use profile_dpi::{
     ProfileLoad, ProfilePanel, ProfileSave, active_stage, short_backup_path,
 };
 pub(crate) use profile_led::{LedKeep, LedLoad, LedPanel};
+pub(crate) use profile_report_rate::ReportRateProfilePanel;
 
 /// Result of confirming a SmartShift write by reading the value back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,6 +111,7 @@ mod pointer;
 mod pointer_speed;
 mod profile_dpi;
 mod profile_led;
+mod profile_report_rate;
 mod reconciliation;
 mod report_rate;
 mod scroll;

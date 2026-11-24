@@ -85,7 +85,11 @@ fn extended_rate(setting: ExtendedReportRate) -> ReportRate {
 }
 
 /// The `0x8061` setting whose rate is `rate`, if there is one.
-fn extended_setting(rate: ReportRate) -> Option<ExtendedReportRate> {
+///
+/// `pub(crate)`: [`super::profile_edit`] reuses this to encode the same rate
+/// into a stored profile's sector (`ExtendedReportRate` is also that byte's
+/// wire value there) rather than re-deriving the mapping.
+pub(crate) fn extended_setting(rate: ReportRate) -> Option<ExtendedReportRate> {
     EXTENDED_RATES
         .into_iter()
         .find(|&setting| extended_rate(setting) == rate)

@@ -98,7 +98,7 @@ pub use openlogi_core::hid::{
     EasySwitchHosts, EasySwitchSlot, HostConnection, HostOsInfo, HostOsKind,
 };
 pub use openlogi_core::hid::{
-    ForceSensingInfo, PointerSpeed, ReportRate, ReportRateInfo, SidetoneLevel,
+    ForceSensingInfo, PointerSpeed, ReportRate, ReportRateInfo, ReportRateSaved, SidetoneLevel,
 };
 pub use os_layout::{HostOs, OsLayoutOutcome, OsVersion, keep_os_layout_on};
 pub use pointer_scaling::{

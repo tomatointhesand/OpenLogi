@@ -42,7 +42,7 @@ pub use onboard::{
 };
 pub use pairing::{Click, PairingError, PasskeyMethod, ReceiverSelector};
 pub use pointer_speed::PointerSpeed;
-pub use report_rate::{ReportRate, ReportRateInfo};
+pub use report_rate::{ReportRate, ReportRateInfo, ReportRateSaved};
 pub use route::{
     DIRECT_DEVICE_INDEX, DeviceRoute, KeypadDescriptor, LOGITECH_VENDOR_ID, RECEIVERS,
     ReceiverBrand, ReceiverDescriptor, ReceiverProtocol, find_receiver, is_receiver_pid,

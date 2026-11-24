@@ -52,8 +52,9 @@ use openlogi_core::hid::{
     HidppOperation, HostConnection, HostOsInfo, HostOsKind, LightCommand, OnboardMode,
     OnboardProfile, OnboardState, PasskeyMethod, ProfileDpi, ProfileDpiError, ProfileDpiSaved,
     ProfileIndex, ProfileLed, ProfileLedSaved, ReceiverSelector, ReportRate, ReportRateInfo,
-    ScrollReportingTarget, ScrollWheelMode, SidetoneLevel, SmartShiftAutoDisengage, SmartShiftMode,
-    SmartShiftStatus, SmartShiftThreshold, TunableTorque, WriteError,
+    ReportRateSaved, ScrollReportingTarget, ScrollWheelMode, SidetoneLevel,
+    SmartShiftAutoDisengage, SmartShiftMode, SmartShiftStatus, SmartShiftThreshold, TunableTorque,
+    WriteError,
 };
 use openlogi_ipc::{
     ActionRingCommandError, ActionRingInvocation, ActionRingPresentation, AgentRequest,
@@ -1105,6 +1106,33 @@ fn profile_led() {
             backup: "b".into(),
         },
         "010102031e0162",
+    );
+}
+
+#[test]
+fn profile_report_rate() {
+    let route = DeviceRoute::Bolt {
+        receiver_uid: "F00DCAFE".into(),
+        slot: 1,
+    };
+    assert_wire(
+        &AgentRequest::WriteProfileReportRate {
+            route,
+            profile: ProfileIndex::new(1).unwrap(),
+            rate: ReportRate::new(500),
+        },
+        "3e000846303044434146450101fbf401",
+    );
+    let saved = ReportRateInfo {
+        current: ReportRate::new(500),
+        supported: vec![ReportRate::new(125), ReportRate::new(500)],
+    };
+    assert_wire(
+        &ReportRateSaved {
+            saved,
+            backup: "b".into(),
+        },
+        "fbf401027dfbf4010162",
     );
 }
 

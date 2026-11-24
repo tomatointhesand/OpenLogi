@@ -72,7 +72,8 @@ use openlogi_fixture::{DeviceProfile, FixtureError, ProfileDeviceSettings, Profi
 use openlogi_hid::{
     BacklightChange, BacklightState, DeviceRoute, Dpi, DpiInfo, EasySwitchHosts, FnLockState,
     ForceSensingInfo, LightCommand, OnboardState, PasskeyMethod, PointerSpeed, ReceiverSelector,
-    ReportRate, ReportRateInfo, ScrollWheelMode, SidetoneLevel, SmartShiftStatus, WriteError,
+    ReportRate, ReportRateInfo, ReportRateSaved, ScrollWheelMode, SidetoneLevel, SmartShiftStatus,
+    WriteError,
 };
 use openlogi_ipc::transport;
 use openlogi_ipc::{
@@ -1654,6 +1655,19 @@ impl Agent for MockAgent {
         _brightness: u8,
     ) -> Result<ProfileLedSaved, ProfileDpiError> {
         info!(%route, "write_profile_led (no onboard memory in the mock)");
+        Err(ProfileDpiError::Device(WriteError::FeatureUnsupported {
+            feature_hex: 0x8100,
+        }))
+    }
+
+    async fn write_profile_report_rate(
+        self,
+        _: Context,
+        route: DeviceRoute,
+        _profile: ProfileIndex,
+        _rate: ReportRate,
+    ) -> Result<ReportRateSaved, ProfileDpiError> {
+        info!(%route, "write_profile_report_rate (no onboard memory in the mock)");
         Err(ProfileDpiError::Device(WriteError::FeatureUnsupported {
             feature_hex: 0x8100,
         }))

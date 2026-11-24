@@ -29,7 +29,7 @@ use openlogi_hid::{
     BacklightChange, BacklightState, DeviceRoute, Dpi, DpiInfo, EasySwitchHosts, FnLockState,
     ForceSensingInfo, HapticRestore, HapticRestoreOutcome, HapticWaveform, HidppOperation,
     LightCommand, OnboardState, PointerSpeed, ReceiverSelector, ReportRate, ReportRateInfo,
-    ScrollWheelMode, SidetoneLevel, SmartShiftStatus, WriteError,
+    ReportRateSaved, ScrollWheelMode, SidetoneLevel, SmartShiftStatus, WriteError,
 };
 use openlogi_ipc::transport;
 use openlogi_ipc::{
@@ -707,6 +707,45 @@ impl Agent for AgentServer {
         match &result {
             Ok(saved) => info!(%route, backup = %saved.backup, "LED setting saved"),
             Err(error) => warn!(%route, %error, "saving the LED setting failed"),
+        }
+        result
+    }
+
+    async fn write_profile_report_rate(
+        self,
+        _: Context,
+        route: DeviceRoute,
+        profile: ProfileIndex,
+        rate: ReportRate,
+    ) -> Result<ReportRateSaved, ProfileDpiError> {
+        let backup_dir = openlogi_core::paths::state_dir()
+            .map_err(|error| ProfileDpiError::BackupFailed(error.to_string()))?
+            .join("profile-backups");
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs());
+        info!(%route, %profile, %rate, "saving the report rate to the mouse's profile");
+        let result = self
+            .shared
+            .device(&route)
+            .run_to_completion(HidppOperation::ReadOnboard, move |c| async move {
+                Ok(
+                    openlogi_hid::write::profile_edit::save_profile_report_rate_on(
+                        &c,
+                        profile,
+                        rate,
+                        &backup_dir,
+                        "mouse",
+                        now_secs,
+                    )
+                    .await,
+                )
+            })
+            .await
+            .map_err(ProfileDpiError::Device)?;
+        match &result {
+            Ok(saved) => info!(%route, backup = %saved.backup, "report rate saved to the profile"),
+            Err(error) => warn!(%route, %error, "saving the report rate to the profile failed"),
         }
         result
     }

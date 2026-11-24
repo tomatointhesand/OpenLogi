@@ -33,6 +33,10 @@ pub(super) struct PointerState {
     pub(super) profile_panels: HashMap<DeviceKey, super::profile_dpi::ProfilePanel>,
     /// Each mouse's stored LED setting, once asked for.
     pub(super) led_panels: HashMap<DeviceKey, super::profile_led::LedPanel>,
+    /// Each mouse's draft pick and save state for keeping a report rate in
+    /// its stored profile.
+    pub(super) report_rate_profile_panels:
+        HashMap<DeviceKey, super::profile_report_rate::ReportRateProfilePanel>,
 }
 
 impl Default for PointerState {
@@ -49,6 +53,7 @@ impl Default for PointerState {
             next_force_sensing_write: 0,
             profile_panels: HashMap::new(),
             led_panels: HashMap::new(),
+            report_rate_profile_panels: HashMap::new(),
         }
     }
 }

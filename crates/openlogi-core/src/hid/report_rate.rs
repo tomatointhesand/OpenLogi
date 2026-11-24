@@ -51,6 +51,18 @@ impl ReportRateInfo {
     }
 }
 
+/// A mouse's report rate after it was saved into a stored onboard profile,
+/// rather than written live.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReportRateSaved {
+    /// What the mouse reports now, read back live (the profile owns the
+    /// report rate, so this reflects the save).
+    pub saved: ReportRateInfo,
+    /// The file the profile as it was before was saved to; empty when
+    /// nothing needed writing.
+    pub backup: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ReportRate, ReportRateInfo};

@@ -18,7 +18,7 @@ use hidpp::{
 };
 use openlogi_core::hid::{
     Dpi, OnboardMode, ProfileDpi, ProfileDpiError, ProfileDpiSaved, ProfileIndex, ProfileLed,
-    ProfileLedSaved,
+    ProfileLedSaved, ReportRate, ReportRateSaved,
 };
 
 pub use hidpp::feature::onboard_profiles::profile::{
@@ -443,6 +443,53 @@ pub async fn save_profile_led_on(
         dpi_range: None,
     };
     save_led_with(&*onboard, &target, color, brightness).await
+}
+
+/// Save `rate` into onboard profile `profile` of the mouse on `shared`,
+/// through [`save_edit_with`]'s guards. Unlike DPI and LED, there is no
+/// separate read of what the profile stores: `0x8061`'s live report rate
+/// already reflects it whenever a profile is in control (that equivalence is
+/// exactly what confirmed this byte's meaning — see
+/// [`ProfileSector::with_report_rate`]), so the answer is a fresh live read,
+/// not a conversion of the written byte.
+pub async fn save_profile_report_rate_on(
+    shared: &crate::SharedChannel,
+    profile: ProfileIndex,
+    rate: ReportRate,
+    backup_dir: &Path,
+    device_name: &str,
+    now_secs: u64,
+) -> Result<ReportRateSaved, ProfileDpiError> {
+    let (onboard, sector_size, entries) = open(shared.channel(), shared.device_index())
+        .await
+        .map_err(ProfileDpiError::Device)?;
+    let mode = mode_of(&onboard).await.map_err(ProfileDpiError::Device)?;
+    let sector = sector_of(&entries, profile)?;
+    let listed = listed_profile_sectors(&entries);
+    let setting = super::report_rate::extended_setting(rate).ok_or_else(|| {
+        ProfileDpiError::Invalid(format!(
+            "{rate} is not a report rate this mouse's profile can store"
+        ))
+    })?;
+    let target = SaveTarget {
+        profile,
+        sector,
+        sector_size,
+        listed: &listed,
+        mode,
+        backup_dir,
+        device_name,
+        now_secs,
+        dpi_range: None,
+    };
+    let (_after, backup) = save_edit_with(&*onboard, &target, |parsed| {
+        parsed.with_report_rate(setting)
+    })
+    .await?;
+    let saved = super::report_rate::get_report_rate_info_on(shared)
+        .await
+        .map_err(ProfileDpiError::Device)?;
+    Ok(ReportRateSaved { saved, backup })
 }
 
 fn sector_of(entries: &[ProfileEntry], profile: ProfileIndex) -> Result<u16, ProfileDpiError> {

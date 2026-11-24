@@ -204,11 +204,13 @@ impl Render for DpiPanel {
             self.pointer_speed = None;
             self.dpi_section(window, cx)
         };
-        v_flex()
-            .gap_3()
-            .w_full()
-            .child(main)
-            .children(report_rate_section(ReportRateFacts::current(cx), pal))
+        let report_rate =
+            if AppState::try_read(cx).is_some_and(AppState::current_report_rate_locked) {
+                Some(super::profile_report_rate::profile_section(pal, cx))
+            } else {
+                report_rate_section(ReportRateFacts::current(cx), pal)
+            };
+        v_flex().gap_3().w_full().child(main).children(report_rate)
     }
 }
 

@@ -21,7 +21,8 @@ use openlogi_core::hid::{
     BacklightChange, BacklightState, DeviceRoute, DisableKeysMask, DisableKeysState, Dpi, DpiInfo,
     EasySwitchHosts, FnLockState, ForceSensingInfo, LightCommand, OnboardState, PointerSpeed,
     ProfileDpi, ProfileDpiError, ProfileDpiSaved, ProfileIndex, ProfileLed, ProfileLedSaved,
-    ReceiverSelector, ReportRate, ReportRateInfo, SidetoneLevel, SmartShiftStatus, WriteError,
+    ReceiverSelector, ReportRate, ReportRateInfo, ReportRateSaved, SidetoneLevel, SmartShiftStatus,
+    WriteError,
 };
 use openlogi_ipc::{
     AgentClient, ChosenLight, ConfigReloadError, FlowPairTarget, FlowPairingCommandError,
@@ -814,6 +815,41 @@ impl Request for WriteProfileLed {
     }
 }
 
+/// Save a report rate into a mouse's onboard profile, answered as
+/// [`GuiUpdate::ProfileReportRateSaved`]. This rewrites the mouse's flash:
+/// only the "Save to mouse" button sends it. There is no `ReadProfileReportRate`
+/// — [`ReadReportRate`]'s live reading already reflects what the profile
+/// holds whenever it is in control (`AppState::current_report_rate_locked`).
+pub struct WriteProfileReportRate {
+    pub key: DeviceKey,
+    pub route: DeviceRoute,
+    pub profile: ProfileIndex,
+    pub rate: ReportRate,
+}
+
+impl Request for WriteProfileReportRate {
+    type Answer = Result<ReportRateSaved, ProfileDpiError>;
+
+    async fn call(&self, client: &AgentClient) -> Result<Self::Answer, RpcError> {
+        client
+            .write_profile_report_rate(
+                context::current(),
+                self.route.clone(),
+                self.profile,
+                self.rate,
+            )
+            .await
+    }
+
+    fn deliver(self, outcome: Result<Self::Answer, Unavailable>, updates: &UpdateSender) {
+        let _ = updates.send(GuiUpdate::ProfileReportRateSaved {
+            key: self.key,
+            route: self.route,
+            result: profile_dpi_or_unavailable(outcome),
+        });
+    }
+}
+
 /// Unwrap a profile-DPI answer, standing in for it when the agent could not
 /// be reached.
 fn profile_dpi_or_unavailable<T>(
@@ -1301,6 +1337,7 @@ commands! {
     WriteProfileDpi,
     ReadProfileLed,
     WriteProfileLed,
+    WriteProfileReportRate,
     ReloadConfig,
     RequestAccessibilityPrompt,
     RetryConnection,

@@ -455,6 +455,13 @@ impl Runtime {
                     });
                 });
             }
+            ipc::GuiUpdate::ProfileReportRateSaved { key, route, result } => {
+                cx.update(|cx| {
+                    AppState::apply(cx, |state| {
+                        state.apply_profile_report_rate_saved(&key, &route, result)
+                    });
+                });
+            }
             ipc::GuiUpdate::DeviceUnpaired {
                 route,
                 intent,

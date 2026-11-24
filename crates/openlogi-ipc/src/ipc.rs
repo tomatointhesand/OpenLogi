@@ -22,8 +22,8 @@ use openlogi_core::hid::{
     BacklightChange, BacklightState, DeviceRoute, DisableKeysMask, DisableKeysState, Dpi, DpiInfo,
     EasySwitchHosts, FnLockState, ForceSensingInfo, LightCommand, OnboardState, PairingError,
     PasskeyMethod, PointerSpeed, ProfileDpi, ProfileDpiError, ProfileDpiSaved, ProfileIndex,
-    ProfileLed, ProfileLedSaved, ReceiverSelector, ReportRate, ReportRateInfo, ScrollWheelMode,
-    SidetoneLevel, SmartShiftStatus, WriteError,
+    ProfileLed, ProfileLedSaved, ReceiverSelector, ReportRate, ReportRateInfo, ReportRateSaved,
+    ScrollWheelMode, SidetoneLevel, SmartShiftStatus, WriteError,
 };
 use serde::{Deserialize, Serialize};
 pub use succession::Identity;
@@ -201,7 +201,12 @@ pub use succession::Identity;
 /// v48: `Agent::{read_profile_led, write_profile_led}` appended, with
 ///      `ProfileLed` and `ProfileLedSaved` — the fixed LED colour and
 ///      brightness of a G-series mouse's onboard profile, read and saved
-///      (failing with `ProfileDpiError`).
+///      (failing with `ProfileDpiError`). `Agent::write_profile_report_rate`
+///      appended after them, with `ReportRateSaved` — saving a report rate
+///      into the profile rather than writing it live, which `0x8061` refuses
+///      outright while the profile is in control. No matching read: `0x8061`'s
+///      live report rate already reflects the profile's whenever it owns the
+///      mouse, so `Agent::read_report_rate` already answers it.
 pub const PROTOCOL_VERSION: u32 = 48;
 
 /// Environment variable through which the agent hands a supervised helper the
@@ -1308,4 +1313,15 @@ pub trait Agent {
         color: [u8; 3],
         brightness: u8,
     ) -> Result<ProfileLedSaved, ProfileDpiError>;
+    /// Save `rate` into onboard profile `profile` of the mouse on `route`,
+    /// with every guard [`Agent::write_profile_dpi`] has. There is no
+    /// `read_profile_report_rate`: [`Agent::read_report_rate`] already
+    /// answers it, since `0x8061`'s live report rate reflects the profile's
+    /// whenever the profile is in control — which is also why this exists:
+    /// `0x8061`'s own write is refused outright in that mode.
+    async fn write_profile_report_rate(
+        route: DeviceRoute,
+        profile: ProfileIndex,
+        rate: ReportRate,
+    ) -> Result<ReportRateSaved, ProfileDpiError>;
 }

@@ -5,6 +5,13 @@
 //! (profile format 6, 255-byte sectors); the dump is the `REAL_PROFILE_1`
 //! fixture below:
 //!
+//! * byte 0 is the report rate: the same `ExtendedReportRate` (`0x8061`)
+//!   discriminant, 0 (125 Hz) to 6 (8 kHz). Confirmed live, not reverse
+//!   engineered from a dump: writing 0 and 2 here each changed what `0x8061
+//!   getReportRate` reported next, with the mouse in `OnboardMode::Onboard`
+//!   throughout — `0x8061`'s own `setReportRate` is refused outright in that
+//!   mode (`OnboardMode::Host` is required), which is why this byte, not a
+//!   live write, is how a stored profile's report rate is ever changed.
 //! * byte 1 is the default DPI stage, an index into the five stages;
 //! * bytes 4..29 are five stages of 5 bytes each: X DPI (little-endian `u16`),
 //!   Y DPI (little-endian `u16`), lift-off distance (`u8`);
@@ -13,12 +20,14 @@
 //! * a slot whose DPI is zero is unused: with `800, 3200, 0, 0, 0` the DPI
 //!   button toggles between the two (checked on the mouse).
 //!
-//! Every other byte (report rate, button mapping, LED settings, name) is left
-//! as it is. Formats other than 6 are not known to share this layout.
+//! Every other byte (button mapping, LED settings, name) is left as it is.
+//! Formats other than 6 are not known to share this layout.
 
 /// How many DPI stages a profile holds.
 pub const DPI_STAGE_COUNT: usize = 5;
 
+/// Where the report rate sits: an `ExtendedReportRate` discriminant.
+const REPORT_RATE_AT: usize = 0;
 const DEFAULT_STAGE_AT: usize = 1;
 const STAGES_AT: usize = 4;
 const STAGE_LEN: usize = 5;
@@ -83,6 +92,10 @@ pub enum ProfileError {
     /// A sector outside the mouse's profile sectors.
     #[error("sector {0:#06x} is not a profile sector this mouse lets us write")]
     SectorNotWritable(u16),
+    /// A report-rate byte this version does not recognise as one of the seven
+    /// `ExtendedReportRate` settings.
+    #[error("the profile's report-rate byte is {0}, not one of the seven known rates")]
+    BadReportRate(u8),
     /// What the mouse returned is not what was written.
     #[error("read back {found} bytes that differ from the {expected} written")]
     ReadBackMismatch {
@@ -244,6 +257,30 @@ impl ProfileSector {
         }
         let mut bytes = self.with_led_color(self.led_color().unwrap_or_default())?.0;
         bytes[LED_BRIGHTNESS_AT] = percent;
+        let end = bytes.len() - CHECKSUM_LEN;
+        let crc = crc16_ccitt(&bytes[..end]);
+        bytes[end..].copy_from_slice(&crc.to_be_bytes());
+        Ok(Self(bytes))
+    }
+
+    /// The report rate this profile stores, if byte 0 names one of the seven
+    /// `ExtendedReportRate` settings.
+    pub fn report_rate(
+        &self,
+    ) -> Result<crate::feature::extended_report_rate::ExtendedReportRate, ProfileError> {
+        let byte = self.0[REPORT_RATE_AT];
+        crate::feature::extended_report_rate::ExtendedReportRate::try_from(byte)
+            .map_err(|_| ProfileError::BadReportRate(byte))
+    }
+
+    /// A copy whose stored report rate is `rate`. Every other byte is
+    /// unchanged and the checksum is recomputed.
+    pub fn with_report_rate(
+        &self,
+        rate: crate::feature::extended_report_rate::ExtendedReportRate,
+    ) -> Result<Self, ProfileError> {
+        let mut bytes = self.0.clone();
+        bytes[REPORT_RATE_AT] = u8::from(rate);
         let end = bytes.len() - CHECKSUM_LEN;
         let crc = crc16_ccitt(&bytes[..end]);
         bytes[end..].copy_from_slice(&crc.to_be_bytes());
@@ -436,6 +473,55 @@ mod tests {
                 "byte {i} changed from {a:#04x} to {b:#04x}"
             );
         }
+    }
+
+    // -- the report rate -----------------------------------------------------
+
+    #[test]
+    fn the_real_profile_holds_the_report_rate_byte_zero_names() {
+        let profile = ProfileSector::parse(&real_profile(), SECTOR_SIZE).unwrap();
+        assert_eq!(
+            profile.report_rate(),
+            Ok(crate::feature::extended_report_rate::ExtendedReportRate::Hz1000)
+        );
+    }
+
+    #[test]
+    fn setting_the_report_rate_changes_only_byte_zero_and_the_checksum() {
+        use crate::feature::extended_report_rate::ExtendedReportRate;
+
+        let before = real_profile();
+        let profile = ProfileSector::parse(&before, SECTOR_SIZE).unwrap();
+        let after = profile.with_report_rate(ExtendedReportRate::Hz125).unwrap();
+        assert_eq!(after.report_rate(), Ok(ExtendedReportRate::Hz125));
+        for (i, (a, b)) in before.iter().zip(after.as_bytes()).enumerate() {
+            let allowed = i == REPORT_RATE_AT || i >= SECTOR_SIZE - 2;
+            assert!(
+                a == b || allowed,
+                "byte {i} changed from {a:#04x} to {b:#04x}"
+            );
+        }
+        ProfileSector::parse(after.as_bytes(), SECTOR_SIZE).unwrap();
+    }
+
+    #[test]
+    fn setting_the_report_rate_it_already_has_reproduces_the_profile() {
+        use crate::feature::extended_report_rate::ExtendedReportRate;
+
+        let profile = ProfileSector::parse(&real_profile(), SECTOR_SIZE).unwrap();
+        let again = profile
+            .with_report_rate(ExtendedReportRate::Hz1000)
+            .unwrap();
+        assert_eq!(again, profile);
+    }
+
+    #[test]
+    fn an_unrecognised_report_rate_byte_is_an_error() {
+        let mut bytes = real_profile();
+        bytes[REPORT_RATE_AT] = 200;
+        seal(&mut bytes);
+        let profile = ProfileSector::parse(&bytes, SECTOR_SIZE).unwrap();
+        assert_eq!(profile.report_rate(), Err(ProfileError::BadReportRate(200)));
     }
 
     // -- the LED colour ----------------------------------------------------

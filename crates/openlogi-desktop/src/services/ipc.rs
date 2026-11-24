@@ -45,7 +45,8 @@ use std::time::{Duration, Instant};
 use openlogi_core::hid::{
     BacklightState, DeviceRoute, DisableKeysState, Dpi, EasySwitchHosts, FnLockState,
     ForceSensingInfo, LightCommand, PointerSpeed, ProfileDpi, ProfileDpiError, ProfileDpiSaved,
-    ProfileIndex, ProfileLed, ProfileLedSaved, ReportRateInfo, SidetoneLevel, WriteError,
+    ProfileIndex, ProfileLed, ProfileLedSaved, ReportRateInfo, ReportRateSaved, SidetoneLevel,
+    WriteError,
 };
 use openlogi_ipc::client::{self, ConnectError};
 use openlogi_ipc::{
@@ -79,7 +80,7 @@ pub use request::{
     RequestAccessibilityPrompt, RetryConnection, SetBacklight, SetDisableKeys, SetDpi, SetFnLock,
     SetForceSensing, SetLight, SetLightManualPower, SetLighting, SetPointerSpeed, SetReportRate,
     SetSidetone, SetSmartShift, StartFlowPairing, StartPairing, StopFlowPairing, UnpairDevice,
-    WriteProfileDpi, WriteProfileLed,
+    WriteProfileDpi, WriteProfileLed, WriteProfileReportRate,
 };
 
 /// Complete identity of one Disable Keys write/reload transaction.
@@ -279,6 +280,18 @@ pub enum GuiUpdate {
         profile: ProfileIndex,
         /// The read-back and the backup file, or why the save did not land.
         result: Result<ProfileLedSaved, ProfileDpiError>,
+    },
+    /// What a mouse reports after the GUI saved a report rate into its
+    /// profile: the live read-back and the backup file, or the typed
+    /// refusal. Answers [`WriteProfileReportRate`].
+    ProfileReportRateSaved {
+        /// The mouse that was written.
+        key: DeviceKey,
+        /// The connection the write went out on — the same staleness rule as
+        /// [`Self::ReportRateWritten`]'s.
+        route: DeviceRoute,
+        /// The read-back and the backup file, or why the save did not land.
+        result: Result<ReportRateSaved, ProfileDpiError>,
     },
     /// A pairing command could not be delivered, so no session will ever appear
     /// in the observed state to explain the silence. Reported locally rather

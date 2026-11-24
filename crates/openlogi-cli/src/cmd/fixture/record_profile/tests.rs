@@ -12,7 +12,7 @@ use openlogi_core::hid::{
     DisableKeysMask, DisableKeysState, Dpi, DpiInfo, EasySwitchHosts, EasySwitchSlot, FnLockState,
     ForceSensingInfo, HostConnection, LightCommand, PasskeyMethod, PointerSpeed, ProfileDpi,
     ProfileDpiError, ProfileDpiSaved, ProfileIndex, ProfileLed, ProfileLedSaved, ReceiverSelector,
-    ReportRate, ReportRateInfo, ScrollWheelMode, SidetoneLevel, SmartShiftStatus,
+    ReportRate, ReportRateInfo, ReportRateSaved, ScrollWheelMode, SidetoneLevel, SmartShiftStatus,
 };
 use openlogi_fixture::{
     CANONICAL_DEVICE_PROFILE_JSON, SyntheticIdentityKind, classify_synthetic_identity_bytes,
@@ -497,6 +497,16 @@ impl Agent for TestAgent {
         _color: [u8; 3],
         _brightness: u8,
     ) -> Result<ProfileLedSaved, ProfileDpiError> {
+        unreachable!("profile capture must never write the mouse")
+    }
+
+    async fn write_profile_report_rate(
+        self,
+        _: TarpcContext,
+        _route: DeviceRoute,
+        _profile: ProfileIndex,
+        _rate: ReportRate,
+    ) -> Result<ReportRateSaved, ProfileDpiError> {
         unreachable!("profile capture must never write the mouse")
     }
 
