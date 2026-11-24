@@ -106,7 +106,11 @@ fn saving_what_the_mouse_already_holds_sends_nothing() {
     let (mut state, mut receiver) = mouse_on_profile();
     let _ = state.request_current_profile_led();
     let k = key(&state);
-    let _ = state.apply_profile_led_read(&k, index(), Ok(held([1, 2, 3], 40)));
+    // The mouse has no brightness register (`Rgb::scaled_by_brightness`): a
+    // read-back's `color` is already [1, 2, 3] scaled by 40%, truncating —
+    // [0, 0, 1] — not the raw [1, 2, 3] a save of (color: [1, 2, 3],
+    // brightness: 40) is asked for.
+    let _ = state.apply_profile_led_read(&k, index(), Ok(held([0, 0, 1], 40)));
     drain(&mut receiver);
     assert!(state.save_profile_led([1, 2, 3], 40).is_empty());
     assert!(writes(drain(&mut receiver)).is_empty());

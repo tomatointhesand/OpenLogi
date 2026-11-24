@@ -107,8 +107,17 @@ impl LedPanel {
     /// holds. False until the profile has been read.
     #[must_use]
     pub fn differs_from(&self, color: [u8; 3], brightness: u8) -> bool {
-        matches!(&self.load, LedLoad::Ready(held)
-            if held.color != color || held.brightness != brightness)
+        // The profile stores one RGB triple with brightness already baked in
+        // (no HID++ lighting feature has a device-side brightness register —
+        // see `Rgb::scaled_by_brightness`), so `held.color` is already
+        // scaled. Comparing it against a raw, unscaled `color` would see a
+        // "difference" on every read whenever brightness isn't 100, even
+        // right after a save that landed exactly what was asked for.
+        let [r, g, b] = color;
+        let scaled = openlogi_core::color::Rgb::new(r, g, b)
+            .scaled_by_brightness(brightness)
+            .components();
+        matches!(&self.load, LedLoad::Ready(held) if held.color != [scaled.0, scaled.1, scaled.2])
     }
 
     /// Whether a save can be asked for now.
@@ -273,14 +282,27 @@ mod tests {
         ProfileIndex::new(1).unwrap()
     }
 
+    /// The scaled color a real read reports for `(color, brightness)` — the
+    /// mouse has no brightness register, so this is exactly what the device
+    /// stores (see `Rgb::scaled_by_brightness`).
+    fn scaled(color: [u8; 3], brightness: u8) -> [u8; 3] {
+        let [r, g, b] = color;
+        let (r, g, b) = openlogi_core::color::Rgb::new(r, g, b)
+            .scaled_by_brightness(brightness)
+            .components();
+        [r, g, b]
+    }
+
+    /// A read-back as the agent reports it: `color` already scaled.
     fn led(color: [u8; 3], brightness: u8) -> ProfileLed {
         ProfileLed {
             profile: index(),
-            color,
+            color: scaled(color, brightness),
             brightness,
         }
     }
 
+    /// A panel as if `(color, brightness)` had already been saved.
     fn ready(color: [u8; 3], brightness: u8) -> LedPanel {
         let mut panel = LedPanel::new(index());
         panel.begin_load();
@@ -292,13 +314,13 @@ mod tests {
     fn a_new_panel_has_read_nothing_and_cannot_save() {
         let panel = LedPanel::new(index());
         assert_eq!(panel.load(), &LedLoad::Idle);
-        assert!(!panel.can_save([1, 2, 3], 50));
+        assert!(!panel.can_save([100, 150, 200], 50));
     }
 
     #[test]
-    fn a_read_shows_what_the_mouse_holds() {
-        let panel = ready([1, 2, 3], 40);
-        assert_eq!(panel.load(), &LedLoad::Ready(led([1, 2, 3], 40)));
+    fn a_read_shows_the_scaled_colour_the_mouse_holds() {
+        let panel = ready([100, 150, 200], 40);
+        assert_eq!(panel.load(), &LedLoad::Ready(led([100, 150, 200], 40)));
     }
 
     #[test]
@@ -306,65 +328,65 @@ mod tests {
         let mut panel = LedPanel::new(index());
         panel.loaded(Err(ProfileDpiError::Unsupported("not fixed".into())));
         assert!(matches!(panel.load(), LedLoad::Failed(text) if text.contains("not fixed")));
-        assert!(!panel.can_save([1, 2, 3], 50));
+        assert!(!panel.can_save([100, 150, 200], 50));
     }
 
     #[test]
     fn only_a_different_colour_or_brightness_can_be_saved() {
-        let panel = ready([1, 2, 3], 40);
-        assert!(!panel.can_save([1, 2, 3], 40));
-        assert!(panel.can_save([9, 2, 3], 40));
-        assert!(panel.can_save([1, 2, 3], 41));
+        let panel = ready([100, 150, 200], 40);
+        assert!(!panel.can_save([100, 150, 200], 40));
+        assert!(panel.can_save([180, 150, 200], 40));
+        assert!(panel.can_save([100, 150, 200], 41));
     }
 
     #[test]
     fn a_save_asks_for_exactly_what_was_chosen_and_blocks_a_second() {
-        let mut panel = ready([1, 2, 3], 40);
-        let request = panel.begin_save([4, 5, 6], 70).unwrap();
+        let mut panel = ready([100, 150, 200], 40);
+        let request = panel.begin_save([120, 130, 140], 70).unwrap();
         assert_eq!(
             request,
             LedSaveRequest {
                 profile: index(),
-                color: [4, 5, 6],
+                color: [120, 130, 140],
                 brightness: 70
             }
         );
         assert_eq!(panel.save(), &ProfileSave::Saving);
-        assert!(panel.begin_save([7, 8, 9], 10).is_none());
+        assert!(panel.begin_save([10, 20, 30], 10).is_none());
     }
 
     #[test]
     fn nothing_is_asked_when_nothing_differs() {
-        let mut panel = ready([1, 2, 3], 40);
-        assert!(panel.begin_save([1, 2, 3], 40).is_none());
+        let mut panel = ready([100, 150, 200], 40);
+        assert!(panel.begin_save([100, 150, 200], 40).is_none());
         assert_eq!(panel.save(), &ProfileSave::Idle);
     }
 
     #[test]
-    fn a_good_save_shows_the_new_setting_and_the_backup() {
-        let mut panel = ready([1, 2, 3], 40);
-        panel.begin_save([4, 5, 6], 70);
+    fn a_good_save_shows_the_new_scaled_colour_and_the_backup() {
+        let mut panel = ready([100, 150, 200], 40);
+        panel.begin_save([120, 130, 140], 70);
         panel.saved(Ok(ProfileLedSaved {
-            saved: led([4, 5, 6], 70),
+            saved: led([120, 130, 140], 70),
             backup: "b.txt".into(),
         }));
-        assert_eq!(panel.load(), &LedLoad::Ready(led([4, 5, 6], 70)));
+        assert_eq!(panel.load(), &LedLoad::Ready(led([120, 130, 140], 70)));
         assert_eq!(
             panel.save(),
             &ProfileSave::Saved {
                 backup: "b.txt".into()
             }
         );
-        assert!(!panel.can_save([4, 5, 6], 70));
+        assert!(!panel.can_save([120, 130, 140], 70));
     }
 
     #[test]
     fn a_refused_save_keeps_what_the_mouse_holds_and_allows_another_try() {
-        let mut panel = ready([1, 2, 3], 40);
-        panel.begin_save([4, 5, 6], 70);
+        let mut panel = ready([100, 150, 200], 40);
+        panel.begin_save([120, 130, 140], 70);
         panel.saved(Err(ProfileDpiError::HostMode));
         assert!(matches!(panel.save(), ProfileSave::Failed(_)));
-        assert_eq!(panel.load(), &LedLoad::Ready(led([1, 2, 3], 40)));
-        assert!(panel.can_save([4, 5, 6], 70));
+        assert_eq!(panel.load(), &LedLoad::Ready(led([100, 150, 200], 40)));
+        assert!(panel.can_save([120, 130, 140], 70));
     }
 }

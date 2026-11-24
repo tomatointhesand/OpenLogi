@@ -752,7 +752,7 @@ applying_light_setting = "Beleuchtungseinstellung wird angewendet…"
 auto_on_with_camera = "Automatisch mit Kamera einschalten"
 camera_light_auto_description = "Beleuchtung einschalten, sobald eine Kamera verwendet wird, und ausschalten, wenn keine Kamera aktiv ist."
 keyboard_lighting_description = "Wird von OpenLogi angewendet, solange es läuft, und nicht auf der Tastatur gespeichert."
-profile_led_stored = "Die Maus behält %{color} bei %{brightness} % Helligkeit, wenn OpenLogi nicht läuft."
+profile_led_stored = "The mouse shows %{color} when OpenLogi isn't running."
 profile_led_unsaved = "Diese Farbe und Helligkeit sind noch nicht auf der Maus gespeichert."
 profile_led_needs_profile = "Solange OpenLogi die Maus steuert, zeigt sie ihre eigene Farbe. Stelle sie im Reiter „Zeiger“ auf ein Profil um, damit sie eine Farbe behält."
 

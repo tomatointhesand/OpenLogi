@@ -752,7 +752,7 @@ applying_light_setting = "Bruker lysinnstilling…"
 auto_on_with_camera = "Slå på automatisk med kameraet"
 camera_light_auto_description = "Slå på lyset når et kamera er i bruk, og av når ingen kameraer er aktive."
 keyboard_lighting_description = "Brukes av OpenLogi mens det kjører, og lagres ikke på tastaturet."
-profile_led_stored = "Musen beholder %{color} med %{brightness} % lysstyrke når OpenLogi ikke kjører."
+profile_led_stored = "The mouse shows %{color} when OpenLogi isn't running."
 profile_led_unsaved = "Denne fargen og lysstyrken er ikke lagret på musen ennå."
 profile_led_needs_profile = "Musen viser sin egen farge mens OpenLogi styrer den. Bytt til en profil i Peker-fanen for å lagre en farge på musen."
 

@@ -220,9 +220,21 @@ pub async fn save_led_with(
     color: [u8; 3],
     brightness: u8,
 ) -> Result<ProfileLedSaved, ProfileDpiError> {
+    // No HID++ lighting feature has a device-side brightness register (see
+    // `Rgb::scaled_by_brightness`): a stored profile has room for one RGB
+    // triple and nothing else, so brightness must be baked into that triple
+    // here, the same way the live write bakes it in before every send. A
+    // raw, unscaled `color` would store a brightness-100 look regardless of
+    // `brightness`, which is the profile LED silently not responding to a
+    // brightness change that this fixes.
+    let [r, g, b] = color;
+    let scaled = openlogi_core::color::Rgb::new(r, g, b)
+        .scaled_by_brightness(brightness)
+        .components();
+    let scaled = [scaled.0, scaled.1, scaled.2];
     let (after, backup) = save_edit_with(memory, target, |parsed| {
         parsed
-            .with_led_color(color)?
+            .with_led_color(scaled)?
             .with_led_brightness(brightness)
     })
     .await?;
@@ -1067,10 +1079,11 @@ mod tests {
             30,
         ))
         .unwrap();
-        assert_eq!(saved.saved.color, [0, 255, 0]);
+        // brightness is baked into the stored colour: 255 * 30% = 76
+        assert_eq!(saved.saved.color, [0, 76, 0]);
         assert_eq!(saved.saved.brightness, 30);
         let now = ProfileSector::parse(&mouse.bytes(), SIZE).unwrap();
-        assert_eq!(now.led_color(), Some([0, 255, 0]));
+        assert_eq!(now.led_color(), Some([0, 76, 0]));
         // the DPI stages are untouched
         assert_eq!(now.dpi_stages(), [800, 3200, 0, 0, 0]);
         let backup =
@@ -1081,8 +1094,15 @@ mod tests {
     #[test]
     fn an_unchanged_led_writes_nothing() {
         let dir = tempfile::tempdir().unwrap();
-        let mouse = Mouse::new(lit_sector([5, 6, 7], 20));
-        let saved = block_on(save_led_with(&mouse, &save_args(dir.path()), [5, 6, 7], 20)).unwrap();
+        // the sector holds the colour already scaled by its brightness
+        let mouse = Mouse::new(lit_sector([10, 20, 30], 50));
+        let saved = block_on(save_led_with(
+            &mouse,
+            &save_args(dir.path()),
+            [20, 40, 60],
+            50,
+        ))
+        .unwrap();
         assert_eq!(saved.backup, "");
         assert_eq!(mouse.write_count(), 0);
     }

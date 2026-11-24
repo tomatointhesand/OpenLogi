@@ -40,6 +40,21 @@ impl Rgb {
     pub const fn packed(self) -> u32 {
         (self.r as u32) << 16 | (self.g as u32) << 8 | self.b as u32
     }
+
+    /// This color scaled by `percent` (0 to 100), each channel independently.
+    ///
+    /// No HID++ lighting feature has a device-side brightness register —
+    /// "brightness" is this scaling applied client-side before the color is
+    /// sent or stored. Every brightness consumer (the live write in
+    /// `openlogi_agent_core::hardware::lighting_rgb`, and a stored profile's
+    /// LED, which has room for one RGB triple and nothing else) must scale
+    /// through here so a brightness percent means the same dimming
+    /// everywhere.
+    #[must_use]
+    pub fn scaled_by_brightness(self, percent: u8) -> Self {
+        let scale = |c: u8| u8::try_from(u16::from(c) * u16::from(percent) / 100).unwrap_or(c);
+        Self::new(scale(self.r), scale(self.g), scale(self.b))
+    }
 }
 
 /// A color string that is not exactly 6 hex digits.
@@ -109,5 +124,22 @@ mod tests {
         for bad in ["fff", "ff00aa0", "#ff00aa", "red", ""] {
             assert!(bad.parse::<Rgb>().is_err(), "{bad:?} should not parse");
         }
+    }
+
+    #[test]
+    fn scaling_by_a_hundred_percent_changes_nothing() {
+        let color = Rgb::new(0x80, 0x40, 0x20);
+        assert_eq!(color.scaled_by_brightness(100), color);
+    }
+
+    #[test]
+    fn scaling_by_zero_percent_is_black() {
+        assert_eq!(Rgb::WHITE.scaled_by_brightness(0), Rgb::new(0, 0, 0));
+    }
+
+    #[test]
+    fn scaling_dims_each_channel_independently() {
+        let color = Rgb::new(200, 100, 50);
+        assert_eq!(color.scaled_by_brightness(50), Rgb::new(100, 50, 25));
     }
 }

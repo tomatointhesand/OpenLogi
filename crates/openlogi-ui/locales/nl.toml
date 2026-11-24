@@ -752,7 +752,7 @@ applying_light_setting = "Verlichtingsinstelling toepassen…"
 auto_on_with_camera = "Automatisch aan met camera"
 camera_light_auto_description = "Schakel de verlichting in zodra een camera wordt gebruikt en uit wanneer geen camera actief is."
 keyboard_lighting_description = "Toegepast door OpenLogi zolang het draait, niet opgeslagen op het toetsenbord."
-profile_led_stored = "De muis houdt %{color} aan op %{brightness}% helderheid als OpenLogi niet draait."
+profile_led_stored = "The mouse shows %{color} when OpenLogi isn't running."
 profile_led_unsaved = "Deze kleur en helderheid zijn nog niet op de muis opgeslagen."
 profile_led_needs_profile = "De muis toont zijn eigen kleur zolang OpenLogi hem bestuurt. Schakel hem over naar een profiel op het tabblad Aanwijzer om een kleur op de muis te bewaren."
 

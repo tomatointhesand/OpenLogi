@@ -1719,10 +1719,10 @@ pub fn lighting_rgb(lighting: &Lighting) -> (u8, u8, u8) {
     if !lighting.enabled {
         return (0, 0, 0);
     }
-    let (r, g, b) = lighting.color.components();
-    let scale =
-        |c: u8| u8::try_from(u16::from(c) * u16::from(lighting.brightness) / 100).unwrap_or(c);
-    (scale(r), scale(g), scale(b))
+    lighting
+        .color
+        .scaled_by_brightness(lighting.brightness)
+        .components()
 }
 
 /// Bound any single HID++ call by [`WRITE_TIMEOUT`] so an asleep / unresponsive

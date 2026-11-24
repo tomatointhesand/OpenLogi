@@ -48,11 +48,7 @@ pub(super) fn stored_section(lighting: &Lighting, pal: Palette, cx: &App) -> Opt
                     .min_w_0()
                     .text_caption()
                     .text_color(pal.text_muted)
-                    .child(tr!(
-                        "lighting.profile_led_stored",
-                        color => hex(held.color),
-                        brightness => held.brightness.to_string()
-                    )),
+                    .child(tr!("lighting.profile_led_stored", color => hex(held.color))),
             )
             .child(
                 Button::new("profile-led-save")
